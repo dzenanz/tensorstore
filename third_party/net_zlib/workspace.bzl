@@ -31,6 +31,7 @@ def repo():
         system_build_file = Label("//third_party:net_zlib/system.BUILD.bazel"),
         cmake_name = "ZLIB",
         bazel_to_cmake = {},
+		cmake_languages = ["C", "ASM"],
         cmake_target_mapping = {
             "@net_zlib//:zlib": "ZLIB::ZLIB",
         },
