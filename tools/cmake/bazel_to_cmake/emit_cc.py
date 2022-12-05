@@ -210,6 +210,12 @@ add_library({target_name})
 target_sources({target_name} PRIVATE{_SEP}{quote_list(cc_srcs , separator=_SEP)})
 set_property(TARGET {target_name} PROPERTY LINKER_LANGUAGE "CXX")
 """)
+    for f in cc_srcs:
+      if f.endswith(".s") or f.endswith(".S"):
+        _builder.addtext(
+f"""set_property(SOURCE "{f}" PROPERTY LANGUAGE ASM)
+set_property(SOURCE "{f}" APPEND PROPERTY COMPILE_OPTIONS "-x" "assembler-with-cpp")
+""")
   else:
     _builder.addtext(f"""
 add_library({target_name} INTERFACE)
