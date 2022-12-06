@@ -32,6 +32,7 @@ def repo():
         cmake_name = "Zstd",
         bazel_to_cmake = {},
         cmake_languages = ["C", "ASM"],
+        prefix = "SET(CMAKE_ASM_COMPILER ${CMAKE_C_COMPILER})"
         cmake_target_mapping = {
             ":zstdlib": "Zstd::Zstd",
         },
