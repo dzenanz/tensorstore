@@ -1,0 +1,60 @@
+package(default_visibility = ["//visibility:private"])
+
+licenses(["notice"])
+
+cc_library(
+    name = "minizip_ng",
+    srcs = glob(
+        [
+            "*.c",
+        ],
+        exclude = [
+            "*_win32.c",
+            "*_posix.c",
+            "*_apple.c",
+            "mz_strm_libcomp.*",
+            "minizip.c",
+            "minigzip.c",
+        ],
+    ) + select({
+        "@platforms//os:windows": [
+            "mz_os_win32.c",
+            "mz_strm_os_win32.c",
+        ],
+        "//conditions:default": [
+            "mz_os_posix.c",
+            "mz_strm_os_posix.c",
+        ],
+    }),
+    hdrs = glob(
+        ["*.h"],
+        exclude = ["mz_strm_libcomp.*"],
+    ),
+    local_defines = [
+        "HAVE_ZLIB",
+        "ZLIB_COMPAT",
+        "HAVE_ZSTD",
+        "HAVE_BZIP2",
+        "HAVE_LZMA",
+    ],
+    strip_include_prefix = ".",
+    deps = [
+        "@com_google_boringssl//:crypto",
+        "@net_zlib//:zlib",
+        "@net_zstd//:zstdlib",
+        "@org_sourceware_bzip2//:bzip2",
+        "@org_tukaani_xz//:liblzma",
+    ],
+)
+
+cc_binary(
+    name = "minizip",
+    srcs = ["minizip.c"],
+    deps = [":minizip_ng"],
+)
+
+cc_binary(
+    name = "minigzip",
+    srcs = ["minigzip.c"],
+    deps = [":minizip_ng"],
+)
