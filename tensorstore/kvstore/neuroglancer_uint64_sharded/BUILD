@@ -160,6 +160,7 @@ tensorstore_cc_library(
         "@com_google_absl//absl/base:endian",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/synchronization",
+        "@minizip_ng//:minizip_ng",
     ],
     alwayslink = True,
 )
