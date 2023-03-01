@@ -36,6 +36,8 @@ cc_library(
         "HAVE_ZSTD",
         "HAVE_BZIP2",
         "HAVE_LZMA",
+        "HAVE_PKCRYPT",
+        "HAVE_WZAES",
     ],
     strip_include_prefix = ".",
     deps = [
