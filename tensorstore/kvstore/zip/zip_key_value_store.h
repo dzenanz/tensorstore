@@ -16,13 +16,13 @@
 #define TENSORSTORE_KVSTORE_ZIP_ZIP_KEY_VALUE_STORE_H_
 
 /// \file
-/// Simple, non-persistent key-value store backed by an in-zip hash table.
+/// A key-value store backed by a zip file, which can be in memory or on disk.
 
 #include "tensorstore/kvstore/kvstore.h"
 
 namespace tensorstore {
 
-/// Creates a new (unique) in-zip KvStore.
+/// Creates a new (unique) zip KvStore.
 ///
 /// \param atomic If `true`, atomic multi-key transactions are supported.  If
 ///     `false`, only single-key atomic transactions are supported.  Both
