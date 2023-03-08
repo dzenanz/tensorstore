@@ -130,6 +130,7 @@ tensorstore_cc_test(
         "//tensorstore/index_space:index_transform",
         "//tensorstore/internal/json_binding",
         "//tensorstore/kvstore/memory",
+        "//tensorstore/kvstore/zip",
         "//tensorstore/util:span",
         "//tensorstore/util:status",
         "//tensorstore/util:status_testutil",
