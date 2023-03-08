@@ -14,6 +14,7 @@ DRIVERS = [
     "memory",
     "neuroglancer_uint64_sharded",
     "ocdbt",
+    "zip",
 ] + EXTRA_DRIVERS
 
 filegroup(

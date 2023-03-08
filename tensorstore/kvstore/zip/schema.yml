@@ -22,9 +22,9 @@ definitions:
   zip_key_value_store:
     $id: Context.zip_key_value_store
     description: |-
-      Represents the in-zip key-value store.  If multiple `kvstore/zip`
+      Represents the zip key-value store.  If multiple `kvstore/zip`
       specifications reference the same `Context.zip_key_value_store`, they
-      all refer to the same in-zip set of key/value pairs.
+      all refer to the same zip file (set of key/value pairs).
     type: object
   url:
     $id: KvStoreUrl/zip
@@ -35,8 +35,8 @@ definitions:
     title: |
       :literal:`zip://` KvStore URL scheme
     description: |
-      In-zip key-value stores may be specified using the custom
-      :file:`zip://{path}` URL syntax.
+      Zip key-value stores may be specified using the custom
+      :file:`zip://{path}` URL syntax, and :file:`zip:memory_address:length` syntax.
 
       .. admonition:: Examples
          :class: example

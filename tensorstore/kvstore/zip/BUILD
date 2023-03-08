@@ -1,4 +1,4 @@
-# In-zip KeyValueStore driver
+# Zip KeyValueStore driver
 
 load("//bazel:tensorstore.bzl", "tensorstore_cc_library", "tensorstore_cc_test")
 
@@ -40,6 +40,7 @@ tensorstore_cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "@minizip_ng//:minizip_ng",
     ],
     alwayslink = 1,
 )
