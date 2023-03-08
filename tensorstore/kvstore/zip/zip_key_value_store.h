@@ -28,7 +28,7 @@ namespace tensorstore {
 ///     `false`, only single-key atomic transactions are supported.  Both
 ///     versions are exposed for testing implementations of transactional
 ///     operations.
-kvstore::DriverPtr GetZipKeyValueStore(bool atomic = true);
+kvstore::DriverPtr GetZipKeyValueStore();
 
 }  // namespace tensorstore
 
