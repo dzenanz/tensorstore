@@ -172,14 +172,14 @@ TimestampedStorageGeneration GenerationNow(StorageGeneration generation) {
 /// The actual data for a zip-based KeyValueStore.
 ///
 /// This is a separate reference-counted object where: `ZipDriver` ->
-/// `Context::Resource<ZipKeyValueStoreResource>` -> `StoredKeyValuePairs`.
+/// `Context::Resource<ZipEncapsulatorResource>` -> `ZipEncapsulator`.
 /// This allows the `ZipDriver` to retain a reference to the
-/// `ZipKeyValueStoreResource`, while also allowing an equivalent
+/// `ZipEncapsulatorResource`, while also allowing an equivalent
 /// `ZipDriver` to be constructed from the
-/// `ZipKeyValueStoreResource`.
-struct StoredKeyValuePairs
-    : public internal::AtomicReferenceCount<StoredKeyValuePairs> {
-  using Ptr = internal::IntrusivePtr<StoredKeyValuePairs>;
+/// `ZipEncapsulatorResource`.
+struct ZipEncapsulator
+    : public internal::AtomicReferenceCount<ZipEncapsulator> {
+  using Ptr = internal::IntrusivePtr<ZipEncapsulator>;
   struct ValueWithGenerationNumber {
     absl::Cord value;
     uint64_t generation_number;
@@ -213,17 +213,17 @@ struct StoredKeyValuePairs
 
 /// Defines the context resource (see `tensorstore/context.h`) that actually
 /// owns the stored key/value pairs.
-struct ZipKeyValueStoreResource
-    : public internal::ContextResourceTraits<ZipKeyValueStoreResource> {
-  constexpr static char id[] = "zip_key_value_store";
+struct ZipEncapsulatorResource
+    : public internal::ContextResourceTraits<ZipEncapsulatorResource> {
+  constexpr static char id[] = "zip_encapsulator";
   struct Spec {};
-  using Resource = StoredKeyValuePairs::Ptr;
+  using Resource = ZipEncapsulator::Ptr;
   static Spec Default() { return {}; }
   static constexpr auto JsonBinder() { return jb::Object(); }
   static Result<Resource> Create(
       Spec, internal::ContextResourceCreationContext context) {
     test_stream_mem();
-    return StoredKeyValuePairs::Ptr(new StoredKeyValuePairs);
+    return ZipEncapsulator::Ptr(new ZipEncapsulator);
   }
   static Spec GetSpec(const Resource&,
                       const internal::ContextSpecBuilder& builder) {
@@ -232,24 +232,24 @@ struct ZipKeyValueStoreResource
   }
 };
 
-const internal::ContextResourceRegistration<ZipKeyValueStoreResource>
+const internal::ContextResourceRegistration<ZipEncapsulatorResource>
     resource_registration;
 
 /// Data members for `ZipDriverSpec`.
 struct ZipDriverSpecData {
-  Context::Resource<ZipKeyValueStoreResource> zip_key_value_store;
+  Context::Resource<ZipEncapsulatorResource> zip_encapsulator;
 
   /// Make this type compatible with `tensorstore::ApplyMembers`.
   constexpr static auto ApplyMembers = [](auto&& x, auto f) {
     // `x` is a reference to a `SpecData` object.  This function must invoke
     // `f` with a reference to each member of `x`.
-    return f(x.zip_key_value_store);
+    return f(x.zip_encapsulator);
   };
 
   /// Must specify a JSON binder.
   constexpr static auto default_json_binder = jb::Object(
-      jb::Member(ZipKeyValueStoreResource::id,
-                 jb::Projection<&ZipDriverSpecData::zip_key_value_store>()));
+      jb::Member(ZipEncapsulatorResource::id,
+                 jb::Projection<&ZipDriverSpecData::zip_encapsulator>()));
 };
 
 class ZipDriverSpec
@@ -298,7 +298,7 @@ class ZipDriver
   /// `Context` from which the `ZipDriver` was opened, and thereby
   /// allow an equivalent `ZipDriver` to be re-opened from the
   /// `Context`.
-  StoredKeyValuePairs& data() { return **spec_.zip_key_value_store; }
+  ZipEncapsulator& data() { return **spec_.zip_encapsulator; }
 
   /// Obtains a `BoundSpec` representation from an open `Driver`.
   absl::Status GetBoundSpecData(ZipDriverSpecData& spec) const {
@@ -368,7 +368,7 @@ class ZipDriver::TransactionNode
   /// Validates that the underlying `data` matches the generation constraints
   /// specified in the transaction.  No changes are made to the `data`.
   static bool ValidateEntryConditions(
-      StoredKeyValuePairs& data,
+      ZipEncapsulator& data,
       internal_kvstore::SinglePhaseMutation& single_phase_mutation,
       const absl::Time& commit_time) ABSL_SHARED_LOCKS_REQUIRED(data.mutex) {
     bool validated = true;
@@ -380,7 +380,7 @@ class ZipDriver::TransactionNode
     return validated;
   }
 
-  static bool ValidateEntryConditions(StoredKeyValuePairs& data,
+  static bool ValidateEntryConditions(ZipEncapsulator& data,
                                       internal_kvstore::MutationEntry& entry,
                                       const absl::Time& commit_time)
       ABSL_SHARED_LOCKS_REQUIRED(data.mutex) {
@@ -402,7 +402,7 @@ class ZipDriver::TransactionNode
     return validated;
   }
 
-  static bool ValidateEntryConditions(StoredKeyValuePairs& data,
+  static bool ValidateEntryConditions(ZipEncapsulator& data,
                                       BufferedReadModifyWriteEntry& entry,
                                       const absl::Time& commit_time)
       ABSL_SHARED_LOCKS_REQUIRED(data.mutex) {
@@ -430,7 +430,7 @@ class ZipDriver::TransactionNode
   /// It is assumed that the constraints have already been validated by
   /// `ValidateConditions`.
   static void ApplyMutation(
-      StoredKeyValuePairs& data,
+      ZipEncapsulator& data,
       internal_kvstore::SinglePhaseMutation& single_phase_mutation,
       const absl::Time& commit_time) ABSL_EXCLUSIVE_LOCKS_REQUIRED(data.mutex) {
     for (auto& entry : single_phase_mutation.entries_) {
@@ -490,7 +490,7 @@ Future<ReadResult> ZipDriver::Read(Key key, ReadOptions options) {
 Future<TimestampedStorageGeneration> ZipDriver::Write(
     Key key, std::optional<Value> value, WriteOptions options) {
   using ValueWithGenerationNumber =
-      StoredKeyValuePairs::ValueWithGenerationNumber;
+      ZipEncapsulator::ValueWithGenerationNumber;
   auto& data = this->data();
   absl::WriterMutexLock lock(&data.mutex);
   auto& values = data.values;
@@ -598,8 +598,8 @@ Result<kvstore::Spec> ParseZipUrl(std::string_view url) {
     return absl::InvalidArgumentError("Fragment identifier not supported");
   }
   auto driver_spec = internal::MakeIntrusivePtr<ZipDriverSpec>();
-  driver_spec->data_.zip_key_value_store =
-      Context::Resource<ZipKeyValueStoreResource>::DefaultSpec();
+  driver_spec->data_.zip_encapsulator =
+      Context::Resource<ZipEncapsulatorResource>::DefaultSpec();
   return {std::in_place, std::move(driver_spec),
           internal::PercentDecode(parsed.authority_and_path)};
 }
@@ -608,8 +608,8 @@ Result<kvstore::Spec> ParseZipUrl(std::string_view url) {
 
 kvstore::DriverPtr GetZipKeyValueStore() {
   auto ptr = internal::MakeIntrusivePtr<ZipDriver>();
-  ptr->spec_.zip_key_value_store =
-      Context::Default().GetResource<ZipKeyValueStoreResource>().value();
+  ptr->spec_.zip_encapsulator =
+      Context::Default().GetResource<ZipEncapsulatorResource>().value();
   return ptr;
 }
 
