@@ -17,6 +17,7 @@
 #include <atomic>
 #include <deque>
 #include <iterator>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -27,7 +28,6 @@
 #include "absl/strings/match.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
-#include <nlohmann/json.hpp>
 #include "tensorstore/context.h"
 #include "tensorstore/context_resource_provider.h"
 #include "tensorstore/internal/intrusive_ptr.h"
@@ -129,22 +129,17 @@ const internal::ContextResourceRegistration<ZipKeyValueStoreResource>
 struct ZipDriverSpecData {
   Context::Resource<ZipKeyValueStoreResource> zip_key_value_store;
 
-  bool atomic = true;
-
   /// Make this type compatible with `tensorstore::ApplyMembers`.
   constexpr static auto ApplyMembers = [](auto&& x, auto f) {
     // `x` is a reference to a `SpecData` object.  This function must invoke
     // `f` with a reference to each member of `x`.
-    return f(x.zip_key_value_store, x.atomic);
+    return f(x.zip_key_value_store);
   };
 
   /// Must specify a JSON binder.
   constexpr static auto default_json_binder = jb::Object(
-      jb::Member(
-          ZipKeyValueStoreResource::id,
-          jb::Projection<&ZipDriverSpecData::zip_key_value_store>()),
-      jb::Member("atomic", jb::Projection<&ZipDriverSpecData::atomic>(
-                               jb::DefaultValue([](auto* y) { *y = true; }))));
+      jb::Member(ZipKeyValueStoreResource::id,
+                 jb::Projection<&ZipDriverSpecData::zip_key_value_store>()));
 };
 
 class ZipDriverSpec
@@ -165,8 +160,7 @@ class ZipDriverSpec
 
 /// Defines the "zip" KeyValueStore driver.
 class ZipDriver
-    : public internal_kvstore::RegisteredDriver<ZipDriver,
-                                                ZipDriverSpec> {
+    : public internal_kvstore::RegisteredDriver<ZipDriver, ZipDriverSpec> {
  public:
   Future<ReadResult> Read(Key key, ReadOptions options) override;
 
@@ -442,7 +436,7 @@ Future<const void> ZipDriver::DeleteRange(KeyRange range) {
 }
 
 void ZipDriver::ListImpl(ListOptions options,
-                            AnyFlowReceiver<absl::Status, Key> receiver) {
+                         AnyFlowReceiver<absl::Status, Key> receiver) {
   auto& data = this->data();
   std::atomic<bool> cancelled{false};
   execution::set_starting(receiver, [&cancelled] {
@@ -474,18 +468,12 @@ void ZipDriver::ListImpl(ListOptions options,
 absl::Status ZipDriver::ReadModifyWrite(
     internal::OpenTransactionPtr& transaction, size_t& phase, Key key,
     ReadModifyWriteSource& source) {
-  if (!spec_.atomic) {
-    return Driver::ReadModifyWrite(transaction, phase, std::move(key), source);
-  }
   return internal_kvstore::AddReadModifyWrite<TransactionNode>(
       this, transaction, phase, std::move(key), source);
 }
 
 absl::Status ZipDriver::TransactionalDeleteRange(
     const internal::OpenTransactionPtr& transaction, KeyRange range) {
-  if (!spec_.atomic) {
-    return Driver::TransactionalDeleteRange(transaction, std::move(range));
-  }
   return internal_kvstore::AddDeleteRange<TransactionNode>(this, transaction,
                                                            std::move(range));
 }
@@ -508,11 +496,10 @@ Result<kvstore::Spec> ParseZipUrl(std::string_view url) {
 
 }  // namespace
 
-kvstore::DriverPtr GetZipKeyValueStore(bool atomic) {
+kvstore::DriverPtr GetZipKeyValueStore() {
   auto ptr = internal::MakeIntrusivePtr<ZipDriver>();
   ptr->spec_.zip_key_value_store =
       Context::Default().GetResource<ZipKeyValueStoreResource>().value();
-  ptr->spec_.atomic = atomic;
   return ptr;
 }
 
