@@ -1,4 +1,4 @@
-# In-memory KeyValueStore driver
+# In-zip KeyValueStore driver
 
 load("//bazel:tensorstore.bzl", "tensorstore_cc_library", "tensorstore_cc_test")
 
@@ -15,9 +15,9 @@ filegroup(
 )
 
 tensorstore_cc_library(
-    name = "memory",
-    srcs = ["memory_key_value_store.cc"],
-    hdrs = ["memory_key_value_store.h"],
+    name = "zip",
+    srcs = ["zip_key_value_store.cc"],
+    hdrs = ["zip_key_value_store.h"],
     deps = [
         "//tensorstore:context",
         "//tensorstore/internal:intrusive_ptr",
@@ -45,11 +45,11 @@ tensorstore_cc_library(
 )
 
 tensorstore_cc_test(
-    name = "memory_key_value_store_test",
+    name = "zip_key_value_store_test",
     size = "small",
-    srcs = ["memory_key_value_store_test.cc"],
+    srcs = ["zip_key_value_store_test.cc"],
     deps = [
-        ":memory",
+        ":zip",
         "//tensorstore:context",
         "//tensorstore/internal:json_gtest",
         "//tensorstore/internal/cache_key",

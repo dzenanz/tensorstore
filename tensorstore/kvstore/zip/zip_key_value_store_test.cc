@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "tensorstore/kvstore/memory/memory_key_value_store.h"
+#include "tensorstore/kvstore/zip/zip_key_value_store.h"
 
 #include <string>
 #include <utility>
@@ -47,13 +47,13 @@ using ::tensorstore::internal::MatchesKvsReadResult;
 using ::tensorstore::internal::MatchesKvsReadResultNotFound;
 using ::tensorstore::serialization::SerializationRoundTrip;
 
-TEST(MemoryKeyValueStoreTest, Basic) {
-  auto store = tensorstore::GetMemoryKeyValueStore();
+TEST(ZipKeyValueStoreTest, Basic) {
+  auto store = tensorstore::GetZipKeyValueStore();
   tensorstore::internal::TestKeyValueStoreBasicFunctionality(store);
 }
 
-TEST(MemoryKeyValueStoreTest, DeleteRange) {
-  auto store = tensorstore::GetMemoryKeyValueStore();
+TEST(ZipKeyValueStoreTest, DeleteRange) {
+  auto store = tensorstore::GetZipKeyValueStore();
   TENSORSTORE_EXPECT_OK(store->Write("a/b", absl::Cord("xyz")));
   TENSORSTORE_EXPECT_OK(store->Write("a/d", absl::Cord("xyz")));
   TENSORSTORE_EXPECT_OK(store->Write("a/c/x", absl::Cord("xyz")));
@@ -72,8 +72,8 @@ TEST(MemoryKeyValueStoreTest, DeleteRange) {
   EXPECT_THAT(store->Read("a/c/z/f").result(), MatchesKvsReadResultNotFound());
 }
 
-TEST(MemoryKeyValueStoreTest, List) {
-  auto store = tensorstore::GetMemoryKeyValueStore();
+TEST(ZipKeyValueStoreTest, List) {
+  auto store = tensorstore::GetZipKeyValueStore();
 
   {
     std::vector<std::string> log;
@@ -163,29 +163,29 @@ TEST(MemoryKeyValueStoreTest, List) {
   }
 }
 
-TEST(MemoryKeyValueStoreTest, Open) {
+TEST(ZipKeyValueStoreTest, Open) {
   auto context = Context::Default();
 
   {
     TENSORSTORE_ASSERT_OK_AND_ASSIGN(
-        auto store, kvstore::Open({{"driver", "memory"}}, context).result());
+        auto store, kvstore::Open({{"driver", "zip"}}, context).result());
     TENSORSTORE_ASSERT_OK(kvstore::Write(store, "key", absl::Cord("value")));
 
     {
       TENSORSTORE_ASSERT_OK_AND_ASSIGN(
-          auto store2, kvstore::Open({{"driver", "memory"}}, context).result());
+          auto store2, kvstore::Open({{"driver", "zip"}}, context).result());
       // Verify that `store2` shares the same underlying storage as `store`.
       EXPECT_THAT(kvstore::Read(store2, "key").result(),
                   MatchesKvsReadResult(absl::Cord("value")));
     }
 
     TENSORSTORE_ASSERT_OK_AND_ASSIGN(
-        auto other_context, Context::FromJson({{"memory_key_value_store",
+        auto other_context, Context::FromJson({{"zip_key_value_store",
                                                 ::nlohmann::json::object_t{}}},
                                               context));
     TENSORSTORE_ASSERT_OK_AND_ASSIGN(
         auto store3,
-        kvstore::Open({{"driver", "memory"}}, other_context).result());
+        kvstore::Open({{"driver", "zip"}}, other_context).result());
     // Verify that `store3` does not share the same underlying storage as
     // `store`.
     EXPECT_THAT(kvstore::Read(store3, "key").result(),
@@ -195,28 +195,28 @@ TEST(MemoryKeyValueStoreTest, Open) {
   // Test that the data persists even when there are no references to the store.
   {
     TENSORSTORE_ASSERT_OK_AND_ASSIGN(
-        auto store, kvstore::Open({{"driver", "memory"}}, context).result());
+        auto store, kvstore::Open({{"driver", "zip"}}, context).result());
     EXPECT_EQ("value", kvstore::Read(store, "key").value().value);
   }
 }
 
-TEST(MemoryKeyValueStoreTest, SpecRoundtrip) {
+TEST(ZipKeyValueStoreTest, SpecRoundtrip) {
   tensorstore::internal::KeyValueStoreSpecRoundtripOptions options;
   options.full_spec = {
-      {"driver", "memory"},
+      {"driver", "zip"},
   };
   tensorstore::internal::TestKeyValueStoreSpecRoundtrip(options);
 }
 
-TEST(MemoryKeyValueStoreTest, SpecRoundtripWithContextSpec) {
+TEST(ZipKeyValueStoreTest, SpecRoundtripWithContextSpec) {
   tensorstore::internal::KeyValueStoreSpecRoundtripOptions options;
   options.spec_request_options.Set(tensorstore::unbind_context);
   options.full_spec = {
-      {"driver", "memory"},
-      {"memory_key_value_store", "memory_key_value_store#a"},
+      {"driver", "zip"},
+      {"zip_key_value_store", "zip_key_value_store#a"},
       {"context",
        {
-           {"memory_key_value_store#a", ::nlohmann::json::object_t()},
+           {"zip_key_value_store#a", ::nlohmann::json::object_t()},
        }},
   };
   // Since spec includes context resources, if we re-open we get a different
@@ -225,18 +225,18 @@ TEST(MemoryKeyValueStoreTest, SpecRoundtripWithContextSpec) {
   tensorstore::internal::TestKeyValueStoreSpecRoundtrip(options);
 }
 
-TEST(MemoryKeyValueStoreTest, InvalidSpec) {
+TEST(ZipKeyValueStoreTest, InvalidSpec) {
   auto context = tensorstore::Context::Default();
 
   // Test with extra key.
   EXPECT_THAT(
-      kvstore::Open({{"driver", "memory"}, {"extra", "key"}}, context).result(),
+      kvstore::Open({{"driver", "zip"}, {"extra", "key"}}, context).result(),
       MatchesStatus(absl::StatusCode::kInvalidArgument));
 }
 
-TEST(MemoryKeyValueStoreTest, BoundSpec) {
+TEST(ZipKeyValueStoreTest, BoundSpec) {
   auto context = tensorstore::Context::Default();
-  ::nlohmann::json json_spec{{"driver", "memory"}};
+  ::nlohmann::json json_spec{{"driver", "zip"}};
   TENSORSTORE_ASSERT_OK_AND_ASSIGN(auto spec,
                                    kvstore::Spec::FromJson(json_spec));
   TENSORSTORE_ASSERT_OK(spec.BindContext(context));
@@ -266,10 +266,10 @@ TEST(MemoryKeyValueStoreTest, BoundSpec) {
     TENSORSTORE_ASSERT_OK_AND_ASSIGN(
         auto store2,
         kvstore::Open(
-            {{"driver", "memory"},
+            {{"driver", "zip"},
              {"context",
-              {{"memory_key_value_store#a", "memory_key_value_store"}}},
-             {"memory_key_value_store", "memory_key_value_store#a"}},
+              {{"zip_key_value_store#a", "zip_key_value_store"}}},
+             {"zip_key_value_store", "zip_key_value_store#a"}},
             context)
             .result());
     std::string store2_cache_key;
@@ -288,9 +288,9 @@ TEST(MemoryKeyValueStoreTest, BoundSpec) {
   }
 }
 
-TEST(MemoryKeyValueStoreTest, OpenCache) {
+TEST(ZipKeyValueStoreTest, OpenCache) {
   auto context = tensorstore::Context::Default();
-  ::nlohmann::json json_spec{{"driver", "memory"}};
+  ::nlohmann::json json_spec{{"driver", "zip"}};
 
   TENSORSTORE_ASSERT_OK_AND_ASSIGN(auto store1,
                                    kvstore::Open(json_spec, context).result());
@@ -307,11 +307,11 @@ TEST(MemoryKeyValueStoreTest, OpenCache) {
   EXPECT_NE(cache_key1, cache_key3);
 }
 
-TEST(MemoryKeyValueStoreTest, ContextBinding) {
+TEST(ZipKeyValueStoreTest, ContextBinding) {
   auto context1 = Context::Default();
   auto context2 = Context::Default();
   TENSORSTORE_ASSERT_OK_AND_ASSIGN(
-      auto base_spec, kvstore::Spec::FromJson({{"driver", "memory"}}));
+      auto base_spec, kvstore::Spec::FromJson({{"driver", "zip"}}));
   auto base_spec1 = base_spec;
   TENSORSTORE_ASSERT_OK(base_spec1.Set(context1));
 
@@ -319,9 +319,9 @@ TEST(MemoryKeyValueStoreTest, ContextBinding) {
   EXPECT_THAT(
       base_spec1.ToJson(),
       ::testing::Optional(MatchesJson(
-          {{"driver", "memory"},
+          {{"driver", "zip"},
            {"context",
-            {{"memory_key_value_store", ::nlohmann::json::object_t()}}}})));
+            {{"zip_key_value_store", ::nlohmann::json::object_t()}}}})));
 
   auto base_spec2 = base_spec;
   TENSORSTORE_ASSERT_OK(base_spec2.Set(context2));
@@ -343,8 +343,8 @@ TEST(MemoryKeyValueStoreTest, ContextBinding) {
   EXPECT_THAT(kvstore::Open(base_spec3).result(), ::testing::Optional(store2));
 }
 
-TEST(MemoryKeyValueStoreTest, SpecSerialization) {
-  ::nlohmann::json json_spec{{"driver", "memory"}, {"path", "abc/"}};
+TEST(ZipKeyValueStoreTest, SpecSerialization) {
+  ::nlohmann::json json_spec{{"driver", "zip"}, {"path", "abc/"}};
   TENSORSTORE_ASSERT_OK_AND_ASSIGN(auto spec,
                                    kvstore::Spec::FromJson(json_spec));
   TENSORSTORE_ASSERT_OK_AND_ASSIGN(auto spec_roundtripped,
@@ -353,8 +353,8 @@ TEST(MemoryKeyValueStoreTest, SpecSerialization) {
               ::testing::Optional(MatchesJson(json_spec)));
 }
 
-TEST(MemoryKeyValueStoreTest, KvStoreSerialization) {
-  ::nlohmann::json json_spec{{"driver", "memory"}, {"path", "abc/"}};
+TEST(ZipKeyValueStoreTest, KvStoreSerialization) {
+  ::nlohmann::json json_spec{{"driver", "zip"}, {"path", "abc/"}};
   TENSORSTORE_ASSERT_OK_AND_ASSIGN(auto store,
                                    kvstore::Open(json_spec).result());
   TENSORSTORE_ASSERT_OK_AND_ASSIGN(auto store_roundtripped,
@@ -365,20 +365,20 @@ TEST(MemoryKeyValueStoreTest, KvStoreSerialization) {
               ::testing::Optional(MatchesJson(json_spec)));
 }
 
-TEST(MemoryKeyValueStoreTest, UrlRoundtrip) {
-  tensorstore::internal::TestKeyValueStoreUrlRoundtrip({{"driver", "memory"}},
-                                                       "memory://");
+TEST(ZipKeyValueStoreTest, UrlRoundtrip) {
+  tensorstore::internal::TestKeyValueStoreUrlRoundtrip({{"driver", "zip"}},
+                                                       "zip://");
   tensorstore::internal::TestKeyValueStoreUrlRoundtrip(
-      {{"driver", "memory"}, {"path", "abc/"}}, "memory://abc/");
+      {{"driver", "zip"}, {"path", "abc/"}}, "zip://abc/");
   tensorstore::internal::TestKeyValueStoreUrlRoundtrip(
-      {{"driver", "memory"}, {"path", "abc def/"}}, "memory://abc%20def/");
+      {{"driver", "zip"}, {"path", "abc def/"}}, "zip://abc%20def/");
 }
 
-TEST(MemoryKeyValueStoreTest, InvalidUri) {
-  EXPECT_THAT(kvstore::Spec::FromUrl("memory://abc?query"),
+TEST(ZipKeyValueStoreTest, InvalidUri) {
+  EXPECT_THAT(kvstore::Spec::FromUrl("zip://abc?query"),
               MatchesStatus(absl::StatusCode::kInvalidArgument,
                             ".*: Query string not supported"));
-  EXPECT_THAT(kvstore::Spec::FromUrl("memory://abc#fragment"),
+  EXPECT_THAT(kvstore::Spec::FromUrl("zip://abc#fragment"),
               MatchesStatus(absl::StatusCode::kInvalidArgument,
                             ".*: Fragment identifier not supported"));
 }
