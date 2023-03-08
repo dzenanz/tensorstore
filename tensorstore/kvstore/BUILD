@@ -16,6 +16,7 @@ DRIVER_DOCS = [
     "s3",
     "tsgrpc",
     "zarr3_sharding_indexed",
+    "zip_memory",
     "zip",
 ]
 

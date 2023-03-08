@@ -134,6 +134,7 @@ tensorstore_cc_test(
         "//tensorstore/internal:intrusive_ptr",
         "//tensorstore/internal/json_binding",
         "//tensorstore/kvstore/memory",
+        "//tensorstore/kvstore/zip_memory",
         "//tensorstore/util:result",
         "//tensorstore/util:span",
         "//tensorstore/util:status_testutil",
