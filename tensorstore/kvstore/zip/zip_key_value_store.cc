@@ -48,6 +48,114 @@
 #include "tensorstore/util/result.h"
 #include "tensorstore/util/status.h"
 
+// in-memory zip test begins
+#include "mz.h"
+#include "mz_os.h"  // for MZ_VERSION_MADEBY
+#include "mz_strm.h"
+#include "mz_strm_mem.h"
+#include "mz_strm_os.h"  // for testing success
+#include "mz_zip.h"
+
+void test_stream_mem(void) {
+  mz_zip_file file_info;
+  void* read_mem_stream = NULL;
+  void* write_mem_stream = NULL;
+  void* os_stream = NULL;
+  void* zip_handle = NULL;
+  int32_t written = 0;
+  int32_t read = 0;
+  int32_t text_size = 0;
+  int32_t buffer_size = 0;
+  int32_t err = MZ_OK;
+  const uint8_t* buffer_ptr = NULL;
+  char* password = "1234";
+  char* text_name = "test";
+  char* text_ptr = "test string";
+  char temp[120];
+
+  memset(&file_info, 0, sizeof(file_info));
+
+  text_size = (int32_t)strlen(text_ptr);
+
+  /* Write zip to memory stream */
+  mz_stream_mem_create(&write_mem_stream);
+  mz_stream_mem_set_grow_size(write_mem_stream, 128 * 1024);
+  mz_stream_open(write_mem_stream, NULL, MZ_OPEN_MODE_CREATE);
+
+  mz_zip_create(&zip_handle);
+  err = mz_zip_open(zip_handle, write_mem_stream, MZ_OPEN_MODE_WRITE);
+
+  if (err == MZ_OK) {
+    file_info.version_madeby = MZ_VERSION_MADEBY;
+    file_info.compression_method = MZ_COMPRESS_METHOD_DEFLATE;
+    file_info.filename = text_name;
+    file_info.uncompressed_size = text_size;
+    file_info.aes_version = MZ_AES_VERSION;
+
+    err = mz_zip_entry_write_open(zip_handle, &file_info,
+                                  MZ_COMPRESS_LEVEL_DEFAULT, 0, password);
+    if (err == MZ_OK) {
+      written = mz_zip_entry_write(zip_handle, text_ptr, text_size);
+      if (written < MZ_OK) err = written;
+      mz_zip_entry_close(zip_handle);
+    }
+
+    mz_zip_close(zip_handle);
+  } else {
+    err = MZ_INTERNAL_ERROR;
+  }
+
+  mz_zip_delete(&zip_handle);
+
+  mz_stream_mem_get_buffer(write_mem_stream, (const void**)&buffer_ptr);
+  mz_stream_mem_seek(write_mem_stream, 0, MZ_SEEK_END);
+  buffer_size = (int32_t)mz_stream_mem_tell(write_mem_stream);
+
+  if (err == MZ_OK) {
+    /* Create a zip file on disk for inspection */
+    mz_stream_os_create(&os_stream);
+    mz_stream_os_open(os_stream, "mytest.zip",
+                      MZ_OPEN_MODE_WRITE | MZ_OPEN_MODE_CREATE);
+    mz_stream_os_write(os_stream, buffer_ptr, buffer_size);
+    mz_stream_os_close(os_stream);
+    mz_stream_os_delete(&os_stream);
+  }
+
+  if (err == MZ_OK) {
+    /* Read from a memory stream */
+    mz_stream_mem_create(&read_mem_stream);
+    mz_stream_mem_set_buffer(read_mem_stream, (void*)buffer_ptr, buffer_size);
+    mz_stream_open(read_mem_stream, NULL, MZ_OPEN_MODE_READ);
+
+    mz_zip_create(&zip_handle);
+    err = mz_zip_open(zip_handle, read_mem_stream, MZ_OPEN_MODE_READ);
+
+    if (err == MZ_OK) {
+      err = mz_zip_goto_first_entry(zip_handle);
+      if (err == MZ_OK) err = mz_zip_entry_read_open(zip_handle, 0, password);
+      if (err == MZ_OK)
+        read = mz_zip_entry_read(zip_handle, temp, sizeof(temp));
+
+      MZ_UNUSED(read);
+
+      mz_zip_entry_close(zip_handle);
+      mz_zip_close(zip_handle);
+    }
+
+    mz_zip_delete(&zip_handle);
+
+    mz_stream_mem_close(&read_mem_stream);
+    mz_stream_mem_delete(&read_mem_stream);
+    read_mem_stream = NULL;
+  }
+
+  mz_stream_mem_close(write_mem_stream);
+  mz_stream_mem_delete(&write_mem_stream);
+  write_mem_stream = NULL;
+}
+
+// in-memory zip test ends
+
 namespace tensorstore {
 namespace {
 
@@ -114,10 +222,12 @@ struct ZipKeyValueStoreResource
   static constexpr auto JsonBinder() { return jb::Object(); }
   static Result<Resource> Create(
       Spec, internal::ContextResourceCreationContext context) {
+    test_stream_mem();
     return StoredKeyValuePairs::Ptr(new StoredKeyValuePairs);
   }
   static Spec GetSpec(const Resource&,
                       const internal::ContextSpecBuilder& builder) {
+    test_stream_mem();
     return {};
   }
 };
