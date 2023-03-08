@@ -25,6 +25,8 @@
 #include "tensorstore/context.h"
 #include "tensorstore/internal/cache_key/cache_key.h"
 #include "tensorstore/internal/json_gtest.h"
+#include "tensorstore/kvstore/driver.h"
+#include "tensorstore/kvstore/key_range.h"
 #include "tensorstore/kvstore/test_util.h"
 #include "tensorstore/serialization/serialization.h"
 #include "tensorstore/serialization/test_util.h"
@@ -180,7 +182,7 @@ TEST(ZipKeyValueStoreTest, Open) {
     }
 
     TENSORSTORE_ASSERT_OK_AND_ASSIGN(
-        auto other_context, Context::FromJson({{"zip_key_value_store",
+        auto other_context, Context::FromJson({{"zip_encapsulator",
                                                 ::nlohmann::json::object_t{}}},
                                               context));
     TENSORSTORE_ASSERT_OK_AND_ASSIGN(
@@ -213,10 +215,10 @@ TEST(ZipKeyValueStoreTest, SpecRoundtripWithContextSpec) {
   options.spec_request_options.Set(tensorstore::unbind_context);
   options.full_spec = {
       {"driver", "zip"},
-      {"zip_key_value_store", "zip_key_value_store#a"},
+      {"zip_encapsulator", "zip_encapsulator#a"},
       {"context",
        {
-           {"zip_key_value_store#a", ::nlohmann::json::object_t()},
+           {"zip_encapsulator#a", ::nlohmann::json::object_t()},
        }},
   };
   // Since spec includes context resources, if we re-open we get a different
@@ -268,8 +270,8 @@ TEST(ZipKeyValueStoreTest, BoundSpec) {
         kvstore::Open(
             {{"driver", "zip"},
              {"context",
-              {{"zip_key_value_store#a", "zip_key_value_store"}}},
-             {"zip_key_value_store", "zip_key_value_store#a"}},
+              {{"zip_encapsulator#a", "zip_encapsulator"}}},
+             {"zip_encapsulator", "zip_encapsulator#a"}},
             context)
             .result());
     std::string store2_cache_key;
@@ -321,7 +323,7 @@ TEST(ZipKeyValueStoreTest, ContextBinding) {
       ::testing::Optional(MatchesJson(
           {{"driver", "zip"},
            {"context",
-            {{"zip_key_value_store", ::nlohmann::json::object_t()}}}})));
+            {{"zip_encapsulator", ::nlohmann::json::object_t()}}}})));
 
   auto base_spec2 = base_spec;
   TENSORSTORE_ASSERT_OK(base_spec2.Set(context2));
