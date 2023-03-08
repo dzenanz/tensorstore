@@ -12,24 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef TENSORSTORE_KVSTORE_MEMORY_MEMORY_KEY_VALUE_STORE_H_
-#define TENSORSTORE_KVSTORE_MEMORY_MEMORY_KEY_VALUE_STORE_H_
+#ifndef TENSORSTORE_KVSTORE_ZIP_ZIP_KEY_VALUE_STORE_H_
+#define TENSORSTORE_KVSTORE_ZIP_ZIP_KEY_VALUE_STORE_H_
 
 /// \file
-/// Simple, non-persistent key-value store backed by an in-memory hash table.
+/// Simple, non-persistent key-value store backed by an in-zip hash table.
 
 #include "tensorstore/kvstore/kvstore.h"
 
 namespace tensorstore {
 
-/// Creates a new (unique) in-memory KvStore.
+/// Creates a new (unique) in-zip KvStore.
 ///
 /// \param atomic If `true`, atomic multi-key transactions are supported.  If
 ///     `false`, only single-key atomic transactions are supported.  Both
 ///     versions are exposed for testing implementations of transactional
 ///     operations.
-kvstore::DriverPtr GetMemoryKeyValueStore(bool atomic = true);
+kvstore::DriverPtr GetZipKeyValueStore(bool atomic = true);
 
 }  // namespace tensorstore
 
-#endif  // TENSORSTORE_KVSTORE_MEMORY_MEMORY_KEY_VALUE_STORE_H_
+#endif  // TENSORSTORE_KVSTORE_ZIP_ZIP_KEY_VALUE_STORE_H_
