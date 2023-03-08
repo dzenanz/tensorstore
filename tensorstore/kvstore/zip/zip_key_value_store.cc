@@ -164,9 +164,6 @@ class ZipDriverSpec
 };
 
 /// Defines the "zip" KeyValueStore driver.
-///
-/// This also serves as documentation of how to implement a KeyValueStore
-/// driver.
 class ZipDriver
     : public internal_kvstore::RegisteredDriver<ZipDriver,
                                                 ZipDriverSpec> {
@@ -449,7 +446,7 @@ void ZipDriver::ListImpl(ListOptions options,
   auto& data = this->data();
   std::atomic<bool> cancelled{false};
   execution::set_starting(receiver, [&cancelled] {
-    cancelled.store(true, std::zip_order_relaxed);
+    cancelled.store(true, std::memory_order_relaxed);
   });
 
   // Collect the keys.
@@ -458,7 +455,7 @@ void ZipDriver::ListImpl(ListOptions options,
     absl::ReaderMutexLock lock(&data.mutex);
     auto it_range = data.Find(options.range);
     for (auto it = it_range.first; it != it_range.second; ++it) {
-      if (cancelled.load(std::zip_order_relaxed)) break;
+      if (cancelled.load(std::memory_order_relaxed)) break;
       std::string_view key = it->first;
       keys.emplace_back(
           key.substr(std::min(options.strip_prefix_length, key.size())));
@@ -467,7 +464,7 @@ void ZipDriver::ListImpl(ListOptions options,
 
   // Send the keys.
   for (auto& key : keys) {
-    if (cancelled.load(std::zip_order_relaxed)) break;
+    if (cancelled.load(std::memory_order_relaxed)) break;
     execution::set_value(receiver, std::move(key));
   }
   execution::set_done(receiver);
