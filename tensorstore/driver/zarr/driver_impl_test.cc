@@ -52,7 +52,7 @@ Result<tensorstore::IndexTransform<>> ResolveBoundsFromMetadata(
       auto store,
       tensorstore::Open({
                             {"driver", "zarr"},
-                            {"kvstore", {{"driver", "memory"}}},
+                            {"kvstore", {{"driver", "zip_memory"}}},
                             {"metadata", ::nlohmann::json(metadata)},
                             {"field", field},
                             {"create", true},
@@ -73,7 +73,7 @@ Result<ResizeParameters> GetResizeParameters(
       auto store,
       tensorstore::Open({
                             {"driver", "zarr"},
-                            {"kvstore", {{"driver", "memory"}}},
+                            {"kvstore", {{"driver", "zip_memory"}}},
                             {"metadata", ::nlohmann::json(metadata)},
                             {"field", field},
                             {"create", true},

@@ -44,7 +44,7 @@ cc_library(
         "@com_google_boringssl//:crypto",
         "@net_zlib//:zlib",
         "@net_zstd//:zstdlib",
-        "@org_sourceware_bzip2//:bzip2",
+        "@org_sourceware_bzip2//:bz2lib",
         "@org_tukaani_xz//:liblzma",
     ],
 )
