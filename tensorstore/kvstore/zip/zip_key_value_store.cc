@@ -58,16 +58,16 @@
 
 void test_stream_mem(void) {
   mz_zip_file file_info;
-  void* read_mem_stream = NULL;
-  void* write_mem_stream = NULL;
-  void* os_stream = NULL;
-  void* zip_handle = NULL;
+  void* read_mem_stream = nullptr;
+  void* write_mem_stream = nullptr;
+  void* os_stream = nullptr;
+  void* zip_handle = nullptr;
   int32_t written = 0;
   int32_t read = 0;
   int32_t text_size = 0;
   int32_t buffer_size = 0;
   int32_t err = MZ_OK;
-  const uint8_t* buffer_ptr = NULL;
+  const uint8_t* buffer_ptr = nullptr;
   char* password = "1234";
   char* text_name = "test";
   char* text_ptr = "test string";
@@ -80,7 +80,7 @@ void test_stream_mem(void) {
   /* Write zip to memory stream */
   mz_stream_mem_create(&write_mem_stream);
   mz_stream_mem_set_grow_size(write_mem_stream, 128 * 1024);
-  mz_stream_open(write_mem_stream, NULL, MZ_OPEN_MODE_CREATE);
+  mz_stream_open(write_mem_stream, nullptr, MZ_OPEN_MODE_CREATE);
 
   mz_zip_create(&zip_handle);
   err = mz_zip_open(zip_handle, write_mem_stream, MZ_OPEN_MODE_WRITE);
@@ -125,7 +125,7 @@ void test_stream_mem(void) {
     /* Read from a memory stream */
     mz_stream_mem_create(&read_mem_stream);
     mz_stream_mem_set_buffer(read_mem_stream, (void*)buffer_ptr, buffer_size);
-    mz_stream_open(read_mem_stream, NULL, MZ_OPEN_MODE_READ);
+    mz_stream_open(read_mem_stream, nullptr, MZ_OPEN_MODE_READ);
 
     mz_zip_create(&zip_handle);
     err = mz_zip_open(zip_handle, read_mem_stream, MZ_OPEN_MODE_READ);
@@ -146,12 +146,12 @@ void test_stream_mem(void) {
 
     mz_stream_mem_close(&read_mem_stream);
     mz_stream_mem_delete(&read_mem_stream);
-    read_mem_stream = NULL;
+    read_mem_stream = nullptr;
   }
 
   mz_stream_mem_close(write_mem_stream);
   mz_stream_mem_delete(&write_mem_stream);
-  write_mem_stream = NULL;
+  write_mem_stream = nullptr;
 }
 
 // in-memory zip test ends
@@ -181,7 +181,7 @@ struct ZipEncapsulator
     : public internal::AtomicReferenceCount<ZipEncapsulator> {
   using Ptr = internal::IntrusivePtr<ZipEncapsulator>;
   struct ValueWithGenerationNumber {
-    absl::Cord value;
+    absl::Cord value;  // payload bytes
     uint64_t generation_number;
     StorageGeneration generation() const {
       return StorageGeneration::FromUint64(generation_number);
@@ -209,6 +209,13 @@ struct ZipEncapsulator
   /// not result in the same generation number being reused for a given key.
   uint64_t next_generation_number ABSL_GUARDED_BY(mutex) = 0;
   Map values ABSL_GUARDED_BY(mutex);
+
+  /// ZipEncapsulator ivars.
+  mz_zip_file file_info ABSL_GUARDED_BY(mutex){};
+  void* read_mem_stream ABSL_GUARDED_BY(mutex) = nullptr;
+  void* write_mem_stream ABSL_GUARDED_BY(mutex) = nullptr;
+  void* os_stream ABSL_GUARDED_BY(mutex) = nullptr;
+  void* zip_handle ABSL_GUARDED_BY(mutex) = nullptr;
 };
 
 /// Defines the context resource (see `tensorstore/context.h`) that actually
@@ -433,6 +440,10 @@ class ZipDriver::TransactionNode
       ZipEncapsulator& data,
       internal_kvstore::SinglePhaseMutation& single_phase_mutation,
       const absl::Time& commit_time) ABSL_EXCLUSIVE_LOCKS_REQUIRED(data.mutex) {
+    std::cout << "applying mutation" << std::endl;
+    int* troublemaker = nullptr;
+    *troublemaker = 1;  // let's have the debugger break here too
+
     for (auto& entry : single_phase_mutation.entries_) {
       if (entry.entry_type() == kReadModifyWrite) {
         auto& rmw_entry = static_cast<BufferedReadModifyWriteEntry&>(entry);
@@ -489,8 +500,7 @@ Future<ReadResult> ZipDriver::Read(Key key, ReadOptions options) {
 
 Future<TimestampedStorageGeneration> ZipDriver::Write(
     Key key, std::optional<Value> value, WriteOptions options) {
-  using ValueWithGenerationNumber =
-      ZipEncapsulator::ValueWithGenerationNumber;
+  using ValueWithGenerationNumber = ZipEncapsulator::ValueWithGenerationNumber;
   auto& data = this->data();
   absl::WriterMutexLock lock(&data.mutex);
   auto& values = data.values;
@@ -588,6 +598,8 @@ absl::Status ZipDriver::TransactionalDeleteRange(
                                                            std::move(range));
 }
 
+// TODO: add support for dataURL, like here:
+// https://github.com/InsightSoftwareConsortium/itk-wasm/blob/ea4654350076ee7ec6a570b542513ea56fa9baa1/packages/compress-stringify/compress-stringify.cxx#L100-L101
 Result<kvstore::Spec> ParseZipUrl(std::string_view url) {
   auto parsed = internal::ParseGenericUri(url);
   assert(parsed.scheme == tensorstore::ZipDriverSpec::id);
