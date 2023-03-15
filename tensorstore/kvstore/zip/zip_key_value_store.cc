@@ -52,8 +52,10 @@
 #include "mz.h"
 #include "mz_os.h"  // for MZ_VERSION_MADEBY
 #include "mz_strm.h"
+#include "mz_strm_buf.h"
 #include "mz_strm_mem.h"
 #include "mz_strm_os.h"  // for testing success
+#include "mz_strm_split.h"
 #include "mz_zip.h"
 
 void test_stream_mem(void) {
@@ -156,6 +158,24 @@ void test_stream_mem(void) {
 
 // in-memory zip test ends
 
+namespace {
+/// Which part of this path/url is file name, and which is key within it.
+/// Returns true if zip filename was successfully determined.
+bool getZipFileFromKey(const std::string& key, std::string& file_part,
+                       std::string& key_part) {
+  file_part = "C:/a/tsTest.zip";  // TODO: implement this
+  // The above hardcoded name should be enough for testing.
+
+  if (key.substr(0, file_part.length()) == file_part) {
+    key_part = key.substr(file_part.length());
+    return true;
+  } else {
+    key_part = key;
+    return false;
+  }
+}
+}  // namespace
+
 namespace tensorstore {
 namespace {
 
@@ -212,10 +232,53 @@ struct ZipEncapsulator
 
   /// ZipEncapsulator ivars.
   mz_zip_file file_info ABSL_GUARDED_BY(mutex){};
-  void* read_mem_stream ABSL_GUARDED_BY(mutex) = nullptr;
-  void* write_mem_stream ABSL_GUARDED_BY(mutex) = nullptr;
-  void* os_stream ABSL_GUARDED_BY(mutex) = nullptr;
+  void* mem_stream ABSL_GUARDED_BY(mutex) = nullptr;
+  void* file_stream ABSL_GUARDED_BY(mutex) = nullptr;
+  void* buffered_stream ABSL_GUARDED_BY(mutex) = nullptr;
+  void* split_stream ABSL_GUARDED_BY(mutex) = nullptr;
   void* zip_handle ABSL_GUARDED_BY(mutex) = nullptr;
+
+  void closeZip() {
+    if (zip_handle != nullptr) {
+      mz_zip_close(zip_handle);
+      mz_zip_delete(&zip_handle);
+    }
+    if (split_stream != nullptr) {
+      mz_stream_split_close(split_stream);
+      mz_stream_split_delete(&split_stream);
+    }
+    if (buffered_stream != nullptr) {
+      mz_stream_buffered_delete(&buffered_stream);
+    }
+    if (file_stream != nullptr) {
+      mz_stream_os_delete(&file_stream);
+    }
+    if (mem_stream != nullptr) {
+      mz_stream_mem_close(mem_stream);
+      mz_stream_mem_delete(&mem_stream);
+    }
+  }
+
+  bool openZipFromFile(const char* fileName,
+                       int32_t openMode = MZ_OPEN_MODE_READWRITE) {
+    int32_t err = MZ_OK;
+
+    mz_stream_os_create(&file_stream);
+    mz_stream_buffered_create(&buffered_stream);
+    mz_stream_split_create(&split_stream);
+
+    mz_stream_set_base(buffered_stream, file_stream);
+    mz_stream_set_base(split_stream, buffered_stream);
+    mz_stream_open(split_stream, fileName, openMode);
+
+    mz_zip_create(&zip_handle);
+    err = mz_zip_open(zip_handle, split_stream, openMode);
+    if (err != MZ_OK) {
+      closeZip();
+      return false;
+    }
+    return true;
+  }
 };
 
 /// Defines the context resource (see `tensorstore/context.h`) that actually
@@ -442,7 +505,7 @@ class ZipDriver::TransactionNode
       const absl::Time& commit_time) ABSL_EXCLUSIVE_LOCKS_REQUIRED(data.mutex) {
     std::cout << "applying mutation" << std::endl;
     int* troublemaker = nullptr;
-    *troublemaker = 1;  // let's have the debugger break here too
+    // *troublemaker = 1;  // let's have the debugger break here too
 
     for (auto& entry : single_phase_mutation.entries_) {
       if (entry.entry_type() == kReadModifyWrite) {
@@ -472,29 +535,86 @@ class ZipDriver::TransactionNode
 };
 
 Future<ReadResult> ZipDriver::Read(Key key, ReadOptions options) {
+  std::string zipFileName, keyPart;
+  getZipFileFromKey(key, zipFileName, keyPart);
+
   auto& data = this->data();
   absl::ReaderMutexLock lock(&data.mutex);
+
   ReadResult result;
-  auto& values = data.values;
-  auto it = values.find(key);
-  if (it == values.end()) {
+
+  if (!data.openZipFromFile(zipFileName.c_str(), MZ_OPEN_MODE_READ)) {
+    throw std::runtime_error("Could not open " + zipFileName);
+  }
+
+  int32_t err = MZ_OK;
+  err = mz_zip_goto_first_entry(data.zip_handle);
+  mz_zip_file* file_info;
+
+  if (err == MZ_OK) {
+    err = mz_zip_entry_get_info(data.zip_handle, &file_info);
+  }
+
+  // go through the list of files in the zip archive
+  while (std::string(file_info->filename) != keyPart)
+  {
+    if (err == MZ_OK) {
+      err = mz_zip_goto_next_entry(data.zip_handle);
+    } else {
+      break;
+    }
+    if (err == MZ_OK) {
+      err = mz_zip_entry_get_info(data.zip_handle, &file_info);
+    } else {
+      break;
+    }    
+  }
+
+  if (std::string(file_info->filename) != keyPart) {
     // Key not found.
     result.stamp = GenerationNow(StorageGeneration::NoValue());
     result.state = ReadResult::kMissing;
     return result;
   }
+
   // Key found.
-  result.stamp = GenerationNow(it->second.generation());
-  if (options.if_not_equal == it->second.generation() ||
+  if (err == MZ_OK) {
+    err = mz_zip_entry_read_open(data.zip_handle, 0, nullptr);
+  }
+  int32_t read = 0;
+  size_t length = file_info->uncompressed_size;
+  char* buffer = new char[length];
+  std::string bufferString(buffer, length);
+  if (err == MZ_OK) {
+    read = mz_zip_entry_read(data.zip_handle, buffer,
+                             file_info->uncompressed_size);
+    if (read != file_info->uncompressed_size) {
+      mz_zip_entry_close(data.zip_handle);
+      data.closeZip();
+      throw std::runtime_error("Could not read key " + keyPart + " from file " +
+                               zipFileName + ". Read " + std::to_string(read) +
+                               " bytes out of " + std::to_string(length));
+    }
+  }
+  // TODO: keep the zip file open for subsequent reads
+  mz_zip_entry_close(data.zip_handle);
+  data.closeZip();
+
+  absl::Cord value(std::move(bufferString));
+
+  ++data.next_generation_number;
+  auto nextGen = StorageGeneration::FromUint64(data.next_generation_number);
+  result.stamp = GenerationNow(nextGen);
+  if (options.if_not_equal == nextGen ||
       (!StorageGeneration::IsUnknown(options.if_equal) &&
-       options.if_equal != it->second.generation())) {
+       options.if_equal != nextGen)) {
     // Generation associated with `key` matches `if_not_equal`.  Abort.
     return result;
   }
-  TENSORSTORE_ASSIGN_OR_RETURN(
-      auto byte_range, options.byte_range.Validate(it->second.value.size()));
+  TENSORSTORE_ASSIGN_OR_RETURN(auto byte_range,
+                               options.byte_range.Validate(length));
   result.state = ReadResult::kValue;
-  result.value = internal::GetSubCord(it->second.value, byte_range);
+  result.value = internal::GetSubCord(value, byte_range);
   return result;
 }
 
