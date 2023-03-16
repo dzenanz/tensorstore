@@ -292,6 +292,30 @@ struct ZipEncapsulator
     }
     return true;
   }
+
+  bool findEntry(const std::string& filePath, mz_zip_file** file_info) {
+    int32_t err = MZ_OK;
+    err = mz_zip_goto_first_entry(zip_handle);
+
+    if (err == MZ_OK) {
+      err = mz_zip_entry_get_info(zip_handle, file_info);
+    }
+
+    // go through the list of files in the zip archive
+    while (std::string((*file_info)->filename) != filePath) {
+      if (err == MZ_OK) {
+        err = mz_zip_goto_next_entry(zip_handle);
+      } else {
+        break;
+      }
+      if (err == MZ_OK) {
+        err = mz_zip_entry_get_info(zip_handle, file_info);
+      } else {
+        break;
+      }
+    }
+    return std::string((*file_info)->filename) == filePath;
+  }
 };
 
 /// Defines the context resource (see `tensorstore/context.h`) that actually
@@ -561,28 +585,8 @@ Future<ReadResult> ZipDriver::Read(Key key, ReadOptions options) {
   }
 
   int32_t err = MZ_OK;
-  err = mz_zip_goto_first_entry(data.zip_handle);
-  mz_zip_file* file_info;
-
-  if (err == MZ_OK) {
-    err = mz_zip_entry_get_info(data.zip_handle, &file_info);
-  }
-
-  // go through the list of files in the zip archive
-  while (std::string(file_info->filename) != keyPart) {
-    if (err == MZ_OK) {
-      err = mz_zip_goto_next_entry(data.zip_handle);
-    } else {
-      break;
-    }
-    if (err == MZ_OK) {
-      err = mz_zip_entry_get_info(data.zip_handle, &file_info);
-    } else {
-      break;
-    }
-  }
-
-  if (std::string(file_info->filename) != keyPart) {
+  mz_zip_file* file_info = nullptr;
+  if (!data.findEntry(keyPart, &file_info)) {
     // Key not found.
     result.stamp = GenerationNow(StorageGeneration::NoValue());
     result.state = ReadResult::kMissing;
