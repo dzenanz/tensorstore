@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <deque>
+#include <filesystem>  // C++17
 #include <iterator>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -163,16 +164,28 @@ namespace {
 /// Returns true if zip filename was successfully determined.
 bool getZipFileFromKey(const std::string& key, std::string& file_part,
                        std::string& key_part) {
-  file_part = "C:/a/tsTest.zip";  // TODO: implement this
-  // The above hardcoded name should be enough for testing.
-
-  if (key.substr(0, file_part.length()) == file_part) {
-    key_part = key.substr(file_part.length());
-    return true;
-  } else {
+  std::string::size_type pos = key.find(".zip");
+  if (pos == std::string::npos) {
+    // .zip not found
+    file_part = "C:/a/tsTest.zip";  // for testing
     key_part = key;
     return false;
+    // throw std::runtime_error("Key " + key +
+    //                          " does not contain '.zip' substring");
   }
+  file_part = key.substr(0, pos + 4);  // include .zip
+  key_part = key.substr(pos + 5);      // skip separator
+
+  // check whether this is a directory with weird .zip extension
+  while (std::filesystem::is_directory(file_part)) {
+    pos = key.find(".zip", pos);  // search again
+    if (pos != std::string::npos) {
+      file_part = key.substr(0, pos + 4);  // include .zip
+      key_part = key.substr(pos + 5);      // skip separator
+    }
+  }
+
+  return true;
 }
 }  // namespace
 
@@ -556,8 +569,7 @@ Future<ReadResult> ZipDriver::Read(Key key, ReadOptions options) {
   }
 
   // go through the list of files in the zip archive
-  while (std::string(file_info->filename) != keyPart)
-  {
+  while (std::string(file_info->filename) != keyPart) {
     if (err == MZ_OK) {
       err = mz_zip_goto_next_entry(data.zip_handle);
     } else {
@@ -567,7 +579,7 @@ Future<ReadResult> ZipDriver::Read(Key key, ReadOptions options) {
       err = mz_zip_entry_get_info(data.zip_handle, &file_info);
     } else {
       break;
-    }    
+    }
   }
 
   if (std::string(file_info->filename) != keyPart) {
@@ -583,10 +595,10 @@ Future<ReadResult> ZipDriver::Read(Key key, ReadOptions options) {
   }
   int32_t read = 0;
   size_t length = file_info->uncompressed_size;
-  char* buffer = new char[length];
-  std::string bufferString(buffer, length);
+  std::string buffer(length + 1, 0);  // debug-friendly zero terminator
+  buffer.resize(length);  // but we don't want it to be a part of the string
   if (err == MZ_OK) {
-    read = mz_zip_entry_read(data.zip_handle, buffer,
+    read = mz_zip_entry_read(data.zip_handle, &buffer[0],
                              file_info->uncompressed_size);
     if (read != file_info->uncompressed_size) {
       mz_zip_entry_close(data.zip_handle);
@@ -600,7 +612,7 @@ Future<ReadResult> ZipDriver::Read(Key key, ReadOptions options) {
   mz_zip_entry_close(data.zip_handle);
   data.closeZip();
 
-  absl::Cord value(std::move(bufferString));
+  absl::Cord value(std::move(buffer));
 
   ++data.next_generation_number;
   auto nextGen = StorageGeneration::FromUint64(data.next_generation_number);
