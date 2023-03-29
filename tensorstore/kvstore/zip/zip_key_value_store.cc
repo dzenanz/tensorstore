@@ -318,6 +318,11 @@ struct ZipEncapsulator
       err = mz_zip_entry_get_info(zip_handle, file_info);
     }
 
+    if (err != MZ_OK) // could be MZ_END_OF_LIST
+    {
+      return false;
+    }
+
     // go through the list of files in the zip archive
     while (std::string((*file_info)->filename) != filePath) {
       if (err == MZ_OK) {
