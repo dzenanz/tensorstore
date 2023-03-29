@@ -244,7 +244,7 @@ struct ZipEncapsulator
   Map values ABSL_GUARDED_BY(mutex);
 
   /// ZipEncapsulator ivars.
-  mz_zip_file file_info ABSL_GUARDED_BY(mutex){};
+  //mz_zip_file file_info ABSL_GUARDED_BY(mutex){};
   void* mem_stream ABSL_GUARDED_BY(mutex) = nullptr;
   void* file_stream ABSL_GUARDED_BY(mutex) = nullptr;
   void* buffered_stream ABSL_GUARDED_BY(mutex) = nullptr;
@@ -291,6 +291,27 @@ struct ZipEncapsulator
       return false;
     }
     return true;
+  }
+
+  bool openZipFileForWriting(const char* fileName,
+      int32_t openMode = MZ_OPEN_MODE_READWRITE)
+  {
+    std::filesystem::path file(fileName);
+    if (!std::filesystem::is_directory(file.parent_path()))
+    {
+      // create the directory first
+      mz_dir_make(file.parent_path().string().c_str());
+    }
+    
+    if (!std::filesystem::exists(file)) {
+      openMode |= MZ_OPEN_MODE_CREATE;
+    }
+    else
+    {
+      openMode |= MZ_OPEN_MODE_APPEND;
+    }
+
+    return openZipFromFile(fileName, openMode);
   }
 
   bool findEntry(const std::string& filePath, mz_zip_file** file_info) {
@@ -572,11 +593,10 @@ class ZipDriver::TransactionNode
 };
 
 Future<ReadResult> ZipDriver::Read(Key key, ReadOptions options) {
-  std::string zipFileName, keyPart;
-  getZipFileFromKey(key, zipFileName, keyPart);
-
   auto& data = this->data();
   absl::ReaderMutexLock lock(&data.mutex);
+  std::string zipFileName, keyPart;
+  getZipFileFromKey(key, zipFileName, keyPart);
 
   ReadResult result;
 
@@ -639,9 +659,16 @@ Future<TimestampedStorageGeneration> ZipDriver::Write(
   using ValueWithGenerationNumber = ZipEncapsulator::ValueWithGenerationNumber;
   auto& data = this->data();
   absl::WriterMutexLock lock(&data.mutex);
-  auto& values = data.values;
-  auto it = values.find(key);
-  if (it == values.end()) {
+
+  std::string zipFileName, keyPart;
+  getZipFileFromKey(key, zipFileName, keyPart);
+  if (!data.openZipFileForWriting(zipFileName.c_str())) {
+    throw std::runtime_error("Could not open " + zipFileName + " for writing");
+  }
+
+  int32_t err = MZ_OK;
+  mz_zip_file* file_info = nullptr;
+  if (!data.findEntry(keyPart, &file_info)) {
     // Key does not already exist.
     if (!StorageGeneration::IsUnknown(options.if_equal) &&
         !StorageGeneration::IsNoValue(options.if_equal)) {
@@ -653,27 +680,54 @@ Future<TimestampedStorageGeneration> ZipDriver::Write(
       // Delete was requested, but key already doesn't exist.
       return GenerationNow(StorageGeneration::NoValue());
     }
-    // Insert the value it into the hash table with the next unused
-    // generation number.
-    it = values
-             .emplace(std::move(key),
-                      ValueWithGenerationNumber{std::move(*value),
-                                                data.next_generation_number++})
-             .first;
-    return GenerationNow(it->second.generation());
+
+    // Add the key/value pair to the zip file
+    mz_zip_file uninitialized_file_info;
+    mz_zip_file file_info{};
+    file_info.version_madeby = MZ_VERSION_MADEBY;
+    file_info.compression_method = MZ_COMPRESS_METHOD_DEFLATE;
+    file_info.filename = keyPart.c_str();
+    file_info.uncompressed_size = value.has_value() ? value.value().size() : 0;
+    file_info.aes_version = MZ_AES_VERSION;
+
+    // we leave the compression to another abstraction layer, e.g. Zarr
+    err = mz_zip_entry_write_open(data.zip_handle, &file_info,
+                                  MZ_COMPRESS_METHOD_STORE, 0, nullptr);
+
+    if (err == MZ_OK) {
+      int32_t written = 0;
+      if (value.has_value()) {
+        written = mz_zip_entry_write(data.zip_handle, value.value().Flatten().data(),
+                               file_info.uncompressed_size);
+      } else {
+        written = mz_zip_entry_write(data.zip_handle, nullptr, 0);
+      }
+      if (written < MZ_OK) {
+        err = written;
+      }
+      mz_zip_entry_close(data.zip_handle);
+    }
+
+    data.closeZip();
+
+    ++data.next_generation_number;
+    auto nextGen = StorageGeneration::FromUint64(data.next_generation_number);
+    return GenerationNow(nextGen);
   }
+
+
+  auto& values = data.values;
+  auto it = values.find(key);
+
   // Key already exists.
-  if (!StorageGeneration::IsUnknown(options.if_equal) &&
-      options.if_equal != it->second.generation()) {
-    // Write is conditioned on an existing generation of `if_equal`,
-    // which does not match the current generation.  Abort.
-    return GenerationNow(StorageGeneration::Unknown());
-  }
   if (!value) {
     // Delete request.
     values.erase(it);
+
     return GenerationNow(StorageGeneration::NoValue());
   }
+  // Update
+ 
   // Set the generation number to the next unused generation number.
   it->second.generation_number = data.next_generation_number++;
   // Update the value.
