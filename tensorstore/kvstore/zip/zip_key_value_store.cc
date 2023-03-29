@@ -244,7 +244,7 @@ struct ZipEncapsulator
   Map values ABSL_GUARDED_BY(mutex);
 
   /// ZipEncapsulator ivars.
-  //mz_zip_file file_info ABSL_GUARDED_BY(mutex){};
+  // mz_zip_file file_info ABSL_GUARDED_BY(mutex){};
   void* mem_stream ABSL_GUARDED_BY(mutex) = nullptr;
   void* file_stream ABSL_GUARDED_BY(mutex) = nullptr;
   void* buffered_stream ABSL_GUARDED_BY(mutex) = nullptr;
@@ -294,20 +294,16 @@ struct ZipEncapsulator
   }
 
   bool openZipFileForWriting(const char* fileName,
-      int32_t openMode = MZ_OPEN_MODE_READWRITE)
-  {
+                             int32_t openMode = MZ_OPEN_MODE_READWRITE) {
     std::filesystem::path file(fileName);
-    if (!std::filesystem::is_directory(file.parent_path()))
-    {
+    if (!std::filesystem::is_directory(file.parent_path())) {
       // create the directory first
       mz_dir_make(file.parent_path().string().c_str());
     }
-    
+
     if (!std::filesystem::exists(file)) {
       openMode |= MZ_OPEN_MODE_CREATE;
-    }
-    else
-    {
+    } else {
       openMode |= MZ_OPEN_MODE_APPEND;
     }
 
@@ -574,19 +570,15 @@ class ZipDriver::TransactionNode
                 rmw_entry.read_result_.stamp.generation)) {
           // Do nothing
         } else if (rmw_entry.read_result_.state == ReadResult::kMissing) {
-          data.values.erase(rmw_entry.key_);
-          stamp.generation = StorageGeneration::NoValue();
+          throw std::runtime_error("Erasing an entry is not implemented");
         } else {
           assert(rmw_entry.read_result_.state == ReadResult::kValue);
-          auto& v = data.values[rmw_entry.key_];
-          v.generation_number = data.next_generation_number++;
-          v.value = std::move(rmw_entry.read_result_.value);
-          stamp.generation = v.generation();
+          WriteOptions options;
+          GetZipKeyValueStore().get()->Write(
+              rmw_entry.key_, rmw_entry.read_result_.value, options);
         }
       } else {
-        auto& dr_entry = static_cast<DeleteRangeEntry&>(entry);
-        auto it_range = data.Find(dr_entry.key_, dr_entry.exclusive_max_);
-        data.values.erase(it_range.first, it_range.second);
+        throw std::runtime_error("Erasing entry range is not implemented");
       }
     }
   }
@@ -656,7 +648,6 @@ Future<ReadResult> ZipDriver::Read(Key key, ReadOptions options) {
 
 Future<TimestampedStorageGeneration> ZipDriver::Write(
     Key key, std::optional<Value> value, WriteOptions options) {
-  using ValueWithGenerationNumber = ZipEncapsulator::ValueWithGenerationNumber;
   auto& data = this->data();
   absl::WriterMutexLock lock(&data.mutex);
 
@@ -667,81 +658,45 @@ Future<TimestampedStorageGeneration> ZipDriver::Write(
   }
 
   int32_t err = MZ_OK;
-  mz_zip_file* file_info = nullptr;
-  if (!data.findEntry(keyPart, &file_info)) {
-    // Key does not already exist.
-    if (!StorageGeneration::IsUnknown(options.if_equal) &&
-        !StorageGeneration::IsNoValue(options.if_equal)) {
-      // Write is conditioned on there being an existing key with a
-      // generation of `if_equal`.  Abort.
-      return GenerationNow(StorageGeneration::Unknown());
+
+  // Add the key/value pair to the zip file
+  mz_zip_file uninitialized_file_info;
+  mz_zip_file file_info;
+  memset(&file_info, 0, sizeof(file_info));
+  file_info.version_madeby = MZ_VERSION_MADEBY;
+  file_info.compression_method = MZ_COMPRESS_METHOD_DEFLATE;
+  file_info.filename = keyPart.c_str();
+  file_info.uncompressed_size = value.has_value() ? value.value().size() : 0;
+  file_info.aes_version = MZ_AES_VERSION;
+
+  // we leave the compression to another abstraction layer, e.g. Zarr
+  err = mz_zip_entry_write_open(data.zip_handle, &file_info,
+                                MZ_COMPRESS_METHOD_STORE, 0, nullptr);
+
+  if (err == MZ_OK) {
+    int32_t written = 0;
+    if (value.has_value()) {
+      written =
+          mz_zip_entry_write(data.zip_handle, value.value().Flatten().data(),
+                             file_info.uncompressed_size);
+    } else {
+      written = mz_zip_entry_write(data.zip_handle, nullptr, 0);
     }
-    if (!value) {
-      // Delete was requested, but key already doesn't exist.
-      return GenerationNow(StorageGeneration::NoValue());
+    if (written < MZ_OK) {
+      err = written;
     }
-
-    // Add the key/value pair to the zip file
-    mz_zip_file uninitialized_file_info;
-    mz_zip_file file_info{};
-    file_info.version_madeby = MZ_VERSION_MADEBY;
-    file_info.compression_method = MZ_COMPRESS_METHOD_DEFLATE;
-    file_info.filename = keyPart.c_str();
-    file_info.uncompressed_size = value.has_value() ? value.value().size() : 0;
-    file_info.aes_version = MZ_AES_VERSION;
-
-    // we leave the compression to another abstraction layer, e.g. Zarr
-    err = mz_zip_entry_write_open(data.zip_handle, &file_info,
-                                  MZ_COMPRESS_METHOD_STORE, 0, nullptr);
-
-    if (err == MZ_OK) {
-      int32_t written = 0;
-      if (value.has_value()) {
-        written = mz_zip_entry_write(data.zip_handle, value.value().Flatten().data(),
-                               file_info.uncompressed_size);
-      } else {
-        written = mz_zip_entry_write(data.zip_handle, nullptr, 0);
-      }
-      if (written < MZ_OK) {
-        err = written;
-      }
-      mz_zip_entry_close(data.zip_handle);
-    }
-
-    data.closeZip();
-
-    ++data.next_generation_number;
-    auto nextGen = StorageGeneration::FromUint64(data.next_generation_number);
-    return GenerationNow(nextGen);
+    mz_zip_entry_close(data.zip_handle);
   }
 
+  data.closeZip();
 
-  auto& values = data.values;
-  auto it = values.find(key);
-
-  // Key already exists.
-  if (!value) {
-    // Delete request.
-    values.erase(it);
-
-    return GenerationNow(StorageGeneration::NoValue());
-  }
-  // Update
- 
-  // Set the generation number to the next unused generation number.
-  it->second.generation_number = data.next_generation_number++;
-  // Update the value.
-  it->second.value = std::move(*value);
-  return GenerationNow(it->second.generation());
+  ++data.next_generation_number;
+  auto nextGen = StorageGeneration::FromUint64(data.next_generation_number);
+  return GenerationNow(nextGen);
 }
 
 Future<const void> ZipDriver::DeleteRange(KeyRange range) {
-  auto& data = this->data();
-  absl::WriterMutexLock lock(&data.mutex);
-  if (!range.empty()) {
-    auto it_range = data.Find(range);
-    data.values.erase(it_range.first, it_range.second);
-  }
+  //throw std::runtime_error("Erasing key range is not implemented");
   return absl::OkStatus();  // Converted to a ReadyFuture.
 }
 
@@ -778,8 +733,29 @@ void ZipDriver::ListImpl(ListOptions options,
 absl::Status ZipDriver::ReadModifyWrite(
     internal::OpenTransactionPtr& transaction, size_t& phase, Key key,
     ReadModifyWriteSource& source) {
+  // original implementation
   return internal_kvstore::AddReadModifyWrite<TransactionNode>(
       this, transaction, phase, std::move(key), source);
+
+  // my attempt
+  internal_kvstore::SinglePhaseMutation single_phase_mutation;
+  phase = single_phase_mutation.phase_number_;
+
+  auto* entry =
+      single_phase_mutation.multi_phase_
+                    ->AllocateReadModifyWriteEntry();
+  entry->key_ = std::move(key);
+  entry->single_phase_mutation_ = {&single_phase_mutation, 0};
+
+  entry->source_ = &source;
+  entry->source_->KvsSetTarget(*entry);
+  
+  //return ReadModifyWriteStatus::kAddedFirst;
+  WriteOptions options;
+  kvstore::ReadModifyWriteTarget::ReadReceiver receiver;
+  //entry->KvsRead(options, receiver);
+  //receiver.
+  //return this->Write(key, entry->value, options);
 }
 
 absl::Status ZipDriver::TransactionalDeleteRange(
