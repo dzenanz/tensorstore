@@ -574,8 +574,9 @@ class ZipDriver::TransactionNode
         } else {
           assert(rmw_entry.read_result_.state == ReadResult::kValue);
           WriteOptions options;
-          GetZipKeyValueStore().get()->Write(
+          auto writeResult = GetZipKeyValueStore().get()->Write(
               rmw_entry.key_, rmw_entry.read_result_.value, options);
+          stamp = writeResult.value();
         }
       } else {
         throw std::runtime_error("Erasing entry range is not implemented");
