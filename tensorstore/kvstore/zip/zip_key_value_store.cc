@@ -696,7 +696,7 @@ Future<TimestampedStorageGeneration> ZipDriver::Write(
 }
 
 Future<const void> ZipDriver::DeleteRange(KeyRange range) {
-  //throw std::runtime_error("Erasing key range is not implemented");
+  // throw std::runtime_error("Erasing key range is not implemented");
   return absl::OkStatus();  // Converted to a ReadyFuture.
 }
 
@@ -709,15 +709,31 @@ void ZipDriver::ListImpl(ListOptions options,
   });
 
   // Collect the keys.
+  int32_t err = MZ_OK;
+  err = mz_zip_goto_first_entry(data.zip_handle);
+
+  mz_zip_file* entry_file_info = nullptr;
+  if (err == MZ_OK) {
+    err = mz_zip_entry_get_info(data.zip_handle, &entry_file_info);
+  }
+
   std::vector<Key> keys;
-  {
-    absl::ReaderMutexLock lock(&data.mutex);
-    auto it_range = data.Find(options.range);
-    for (auto it = it_range.first; it != it_range.second; ++it) {
-      if (cancelled.load(std::memory_order_relaxed)) break;
-      std::string_view key = it->first;
-      keys.emplace_back(
-          key.substr(std::min(options.strip_prefix_length, key.size())));
+  // go through the list of files in the zip archive
+  while (err == MZ_OK) {
+    if (cancelled.load(std::memory_order_relaxed)) break;
+
+    err = mz_zip_goto_next_entry(data.zip_handle);
+    if (err == MZ_OK) {
+      err = mz_zip_entry_get_info(data.zip_handle, &entry_file_info);
+    }
+
+    if (err == MZ_OK) {
+      Key key(entry_file_info->filename);
+      if (key >= options.range.inclusive_min &&
+          key < options.range.exclusive_max) {
+        keys.emplace_back(
+            key.substr(std::min(options.strip_prefix_length, key.size())));
+      }
     }
   }
 
@@ -742,20 +758,19 @@ absl::Status ZipDriver::ReadModifyWrite(
   phase = single_phase_mutation.phase_number_;
 
   auto* entry =
-      single_phase_mutation.multi_phase_
-                    ->AllocateReadModifyWriteEntry();
+      single_phase_mutation.multi_phase_->AllocateReadModifyWriteEntry();
   entry->key_ = std::move(key);
   entry->single_phase_mutation_ = {&single_phase_mutation, 0};
 
   entry->source_ = &source;
   entry->source_->KvsSetTarget(*entry);
-  
-  //return ReadModifyWriteStatus::kAddedFirst;
+
+  // return ReadModifyWriteStatus::kAddedFirst;
   WriteOptions options;
   kvstore::ReadModifyWriteTarget::ReadReceiver receiver;
-  //entry->KvsRead(options, receiver);
-  //receiver.
-  //return this->Write(key, entry->value, options);
+  // entry->KvsRead(options, receiver);
+  // receiver.
+  // return this->Write(key, entry->value, options);
 }
 
 absl::Status ZipDriver::TransactionalDeleteRange(
