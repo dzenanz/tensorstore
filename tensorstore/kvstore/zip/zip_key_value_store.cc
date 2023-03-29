@@ -213,27 +213,6 @@ TimestampedStorageGeneration GenerationNow(StorageGeneration generation) {
 struct ZipEncapsulator
     : public internal::AtomicReferenceCount<ZipEncapsulator> {
   using Ptr = internal::IntrusivePtr<ZipEncapsulator>;
-  struct ValueWithGenerationNumber {
-    absl::Cord value;  // payload bytes
-    uint64_t generation_number;
-    StorageGeneration generation() const {
-      return StorageGeneration::FromUint64(generation_number);
-    }
-  };
-
-  using Map = absl::btree_map<std::string, ValueWithGenerationNumber>;
-  std::pair<Map::iterator, Map::iterator> Find(const std::string& inclusive_min,
-                                               const std::string& exclusive_max)
-      ABSL_SHARED_LOCKS_REQUIRED(mutex) {
-    return {values.lower_bound(inclusive_min),
-            exclusive_max.empty() ? values.end()
-                                  : values.lower_bound(exclusive_max)};
-  }
-
-  std::pair<Map::iterator, Map::iterator> Find(const KeyRange& range)
-      ABSL_SHARED_LOCKS_REQUIRED(mutex) {
-    return Find(range.inclusive_min, range.exclusive_max);
-  }
 
   absl::Mutex mutex;
   /// Next generation number to use when updating the value associated with a
@@ -241,7 +220,6 @@ struct ZipEncapsulator
   /// ensures that creating a key, deleting it, then creating it again does
   /// not result in the same generation number being reused for a given key.
   uint64_t next_generation_number ABSL_GUARDED_BY(mutex) = 0;
-  Map values ABSL_GUARDED_BY(mutex);
 
   /// ZipEncapsulator ivars.
   // mz_zip_file file_info ABSL_GUARDED_BY(mutex){};
@@ -318,7 +296,7 @@ struct ZipEncapsulator
       err = mz_zip_entry_get_info(zip_handle, file_info);
     }
 
-    if (err != MZ_OK) // could be MZ_END_OF_LIST
+    if (err != MZ_OK)  // could be MZ_END_OF_LIST
     {
       return false;
     }
@@ -568,17 +546,29 @@ class ZipDriver::TransactionNode
       assert(stamp.time == absl::InfiniteFuture());
       return true;
     }
-    auto it = data.values.find(entry.key_);
-    if (it == data.values.end()) {
+
+    std::string zipFileName, keyPart;
+    getZipFileFromKey(entry.key_, zipFileName, keyPart);
+
+    if (!data.openZipFromFile(zipFileName.c_str(), MZ_OPEN_MODE_READ)) {
+      throw std::runtime_error("Could not open " + zipFileName);
+    }
+
+    int32_t err = MZ_OK;
+    mz_zip_file* file_info = nullptr;
+    if (!data.findEntry(keyPart, &file_info)) {
+      // not found
       if (StorageGeneration::IsNoValue(if_equal)) {
         entry.read_result_.stamp.time = commit_time;
         return true;
+      } else {
+        return false;
       }
-    } else if (if_equal == it->second.generation()) {
-      entry.read_result_.stamp.time = commit_time;
-      return true;
     }
-    return false;
+
+    // found
+    entry.read_result_.stamp.time = commit_time;
+    return true;
   }
 
   /// Applies the changes in the transaction to the stored `data`.
