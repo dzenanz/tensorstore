@@ -333,6 +333,33 @@ struct ZipEncapsulator
     }
     return std::string((*file_info)->filename) == filePath;
   }
+
+  int32_t addZipEntry(std::string key, std::optional<kvstore::Value> value) {
+    mz_zip_file file_info;
+    memset(&file_info, 0, sizeof(file_info));
+    file_info.version_madeby = MZ_VERSION_MADEBY;
+    file_info.compression_method = MZ_COMPRESS_METHOD_DEFLATE;
+    file_info.filename = key.c_str();
+    file_info.uncompressed_size = value.value().size();
+    file_info.aes_version = MZ_AES_VERSION;
+
+    // we leave the compression to another abstraction layer, e.g. Zarr
+    int32_t err = mz_zip_entry_write_open(zip_handle, &file_info,
+                                          MZ_COMPRESS_METHOD_STORE, 0, nullptr);
+
+    if (err == MZ_OK) {
+      int32_t written =
+          mz_zip_entry_write(zip_handle, value.value().Flatten().data(),
+                             file_info.uncompressed_size);
+
+      if (written < MZ_OK) {
+        err = written;
+      }
+      mz_zip_entry_close(zip_handle);
+    }
+
+    return err;
+  }
 };
 
 /// Defines the context resource (see `tensorstore/context.h`) that actually
@@ -659,41 +686,39 @@ Future<TimestampedStorageGeneration> ZipDriver::Write(
   }
 
   int32_t err = MZ_OK;
-
-  // Add the key/value pair to the zip file
-  mz_zip_file uninitialized_file_info;
-  mz_zip_file file_info;
-  memset(&file_info, 0, sizeof(file_info));
-  file_info.version_madeby = MZ_VERSION_MADEBY;
-  file_info.compression_method = MZ_COMPRESS_METHOD_DEFLATE;
-  file_info.filename = keyPart.c_str();
-  file_info.uncompressed_size = value.has_value() ? value.value().size() : 0;
-  file_info.aes_version = MZ_AES_VERSION;
-
-  // we leave the compression to another abstraction layer, e.g. Zarr
-  err = mz_zip_entry_write_open(data.zip_handle, &file_info,
-                                MZ_COMPRESS_METHOD_STORE, 0, nullptr);
-
-  if (err == MZ_OK) {
-    int32_t written = 0;
-    if (value.has_value()) {
-      written =
-          mz_zip_entry_write(data.zip_handle, value.value().Flatten().data(),
-                             file_info.uncompressed_size);
-    } else {
-      written = mz_zip_entry_write(data.zip_handle, nullptr, 0);
+  mz_zip_file* entry_file_info = nullptr;
+  if (!data.findEntry(keyPart, &entry_file_info)) {
+    // Key not found.
+    if (!StorageGeneration::IsUnknown(options.if_equal) &&
+        !StorageGeneration::IsNoValue(options.if_equal)) {
+      // Write is conditioned on there being an existing key with a
+      // generation of `if_equal`.  Abort.
+      return GenerationNow(StorageGeneration::Unknown());
     }
-    if (written < MZ_OK) {
-      err = written;
+    if (!value) {
+      // Delete was requested, but key already doesn't exist.
+      return GenerationNow(StorageGeneration::NoValue());
     }
-    mz_zip_entry_close(data.zip_handle);
+
+    // Add the key/value pair to the zip file
+    err = data.addZipEntry(keyPart, value);
+    data.closeZip();
+
+    ++data.next_generation_number;
+    auto nextGen = StorageGeneration::FromUint64(data.next_generation_number);
+    return GenerationNow(nextGen);
   }
-
-  data.closeZip();
-
-  ++data.next_generation_number;
-  auto nextGen = StorageGeneration::FromUint64(data.next_generation_number);
-  return GenerationNow(nextGen);
+  // Key already exists.
+  if (!value) {
+    // Delete request.
+    // TODO: erase
+    return GenerationNow(StorageGeneration::NoValue());
+  } else {
+    // Update
+    ++data.next_generation_number;
+    auto nextGen = StorageGeneration::FromUint64(data.next_generation_number);
+    return GenerationNow(nextGen);
+  }
 }
 
 Future<const void> ZipDriver::DeleteRange(KeyRange range) {
