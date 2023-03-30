@@ -18,6 +18,7 @@
 #include <deque>
 #include <filesystem>  // C++17
 #include <iterator>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <string_view>
@@ -29,6 +30,14 @@
 #include "absl/strings/match.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
+#include "mz.h"
+#include "mz_os.h"  // for MZ_VERSION_MADEBY
+#include "mz_strm.h"
+#include "mz_strm_buf.h"
+#include "mz_strm_mem.h"
+#include "mz_strm_os.h"  // for testing success
+#include "mz_strm_split.h"
+#include "mz_zip.h"
 #include "tensorstore/context.h"
 #include "tensorstore/context_resource_provider.h"
 #include "tensorstore/internal/intrusive_ptr.h"
@@ -49,117 +58,12 @@
 #include "tensorstore/util/result.h"
 #include "tensorstore/util/status.h"
 
-// in-memory zip test begins
-#include "mz.h"
-#include "mz_os.h"  // for MZ_VERSION_MADEBY
-#include "mz_strm.h"
-#include "mz_strm_buf.h"
-#include "mz_strm_mem.h"
-#include "mz_strm_os.h"  // for testing success
-#include "mz_strm_split.h"
-#include "mz_zip.h"
-
-void test_stream_mem(void) {
-  mz_zip_file file_info;
-  void* read_mem_stream = nullptr;
-  void* write_mem_stream = nullptr;
-  void* os_stream = nullptr;
-  void* zip_handle = nullptr;
-  int32_t written = 0;
-  int32_t read = 0;
-  int32_t text_size = 0;
-  int32_t buffer_size = 0;
-  int32_t err = MZ_OK;
-  const uint8_t* buffer_ptr = nullptr;
-  char* password = "1234";
-  char* text_name = "test";
-  char* text_ptr = "test string";
-  char temp[120];
-
-  memset(&file_info, 0, sizeof(file_info));
-
-  text_size = (int32_t)strlen(text_ptr);
-
-  /* Write zip to memory stream */
-  mz_stream_mem_create(&write_mem_stream);
-  mz_stream_mem_set_grow_size(write_mem_stream, 128 * 1024);
-  mz_stream_open(write_mem_stream, nullptr, MZ_OPEN_MODE_CREATE);
-
-  mz_zip_create(&zip_handle);
-  err = mz_zip_open(zip_handle, write_mem_stream, MZ_OPEN_MODE_WRITE);
-
-  if (err == MZ_OK) {
-    file_info.version_madeby = MZ_VERSION_MADEBY;
-    file_info.compression_method = MZ_COMPRESS_METHOD_DEFLATE;
-    file_info.filename = text_name;
-    file_info.uncompressed_size = text_size;
-    file_info.aes_version = MZ_AES_VERSION;
-
-    err = mz_zip_entry_write_open(zip_handle, &file_info,
-                                  MZ_COMPRESS_LEVEL_DEFAULT, 0, password);
-    if (err == MZ_OK) {
-      written = mz_zip_entry_write(zip_handle, text_ptr, text_size);
-      if (written < MZ_OK) err = written;
-      mz_zip_entry_close(zip_handle);
-    }
-
-    mz_zip_close(zip_handle);
-  } else {
-    err = MZ_INTERNAL_ERROR;
-  }
-
-  mz_zip_delete(&zip_handle);
-
-  mz_stream_mem_get_buffer(write_mem_stream, (const void**)&buffer_ptr);
-  mz_stream_mem_seek(write_mem_stream, 0, MZ_SEEK_END);
-  buffer_size = (int32_t)mz_stream_mem_tell(write_mem_stream);
-
-  if (err == MZ_OK) {
-    /* Create a zip file on disk for inspection */
-    mz_stream_os_create(&os_stream);
-    mz_stream_os_open(os_stream, "mytest.zip",
-                      MZ_OPEN_MODE_WRITE | MZ_OPEN_MODE_CREATE);
-    mz_stream_os_write(os_stream, buffer_ptr, buffer_size);
-    mz_stream_os_close(os_stream);
-    mz_stream_os_delete(&os_stream);
-  }
-
-  if (err == MZ_OK) {
-    /* Read from a memory stream */
-    mz_stream_mem_create(&read_mem_stream);
-    mz_stream_mem_set_buffer(read_mem_stream, (void*)buffer_ptr, buffer_size);
-    mz_stream_open(read_mem_stream, nullptr, MZ_OPEN_MODE_READ);
-
-    mz_zip_create(&zip_handle);
-    err = mz_zip_open(zip_handle, read_mem_stream, MZ_OPEN_MODE_READ);
-
-    if (err == MZ_OK) {
-      err = mz_zip_goto_first_entry(zip_handle);
-      if (err == MZ_OK) err = mz_zip_entry_read_open(zip_handle, 0, password);
-      if (err == MZ_OK)
-        read = mz_zip_entry_read(zip_handle, temp, sizeof(temp));
-
-      MZ_UNUSED(read);
-
-      mz_zip_entry_close(zip_handle);
-      mz_zip_close(zip_handle);
-    }
-
-    mz_zip_delete(&zip_handle);
-
-    mz_stream_mem_close(&read_mem_stream);
-    mz_stream_mem_delete(&read_mem_stream);
-    read_mem_stream = nullptr;
-  }
-
-  mz_stream_mem_close(write_mem_stream);
-  mz_stream_mem_delete(&write_mem_stream);
-  write_mem_stream = nullptr;
-}
-
-// in-memory zip test ends
-
 namespace {
+using BufferInfo = struct {
+  char* pointer;
+  size_t size;
+};
+
 /// Which part of this path/url is file name, and which is key within it.
 /// Returns true if zip filename was successfully determined.
 bool getZipFileFromKey(const std::string& key, std::string& file_part,
@@ -167,11 +71,9 @@ bool getZipFileFromKey(const std::string& key, std::string& file_part,
   std::string::size_type pos = key.find(".zip");
   if (pos == std::string::npos) {
     // .zip not found
-    file_part = "C:/a/tsTest.zip";  // for testing
+    file_part = "tsTest.zip";  // for testing
     key_part = key;
     return false;
-    // throw std::runtime_error("Key " + key +
-    //                          " does not contain '.zip' substring");
   }
   file_part = key.substr(0, pos + 4);  // include .zip
   key_part = key.substr(pos + 5);      // skip separator
@@ -184,6 +86,24 @@ bool getZipFileFromKey(const std::string& key, std::string& file_part,
       key_part = key.substr(pos + 5);      // skip separator
     }
   }
+
+  return true;
+}
+
+/// Which part of this path is memory address, and which is key within it.
+/// Returns true if memory address was successfully determined.
+bool getMemoryInformationFromKey(const std::string& key,
+                                 BufferInfo** bufferInfo,
+                                 std::string& key_part) {
+  std::string::size_type pos = key.find(".memory");
+  if (pos == std::string::npos) {
+    return false;
+  }
+
+  std::string addressString = key.substr(0, pos);  // exclude .memory
+  key_part = key.substr(pos + 8);                  // skip separator
+  size_t address = std::stoull(addressString);
+  *bufferInfo = reinterpret_cast<BufferInfo*>(address);
 
   return true;
 }
@@ -228,6 +148,8 @@ struct ZipEncapsulator
   void* buffered_stream ABSL_GUARDED_BY(mutex) = nullptr;
   void* split_stream ABSL_GUARDED_BY(mutex) = nullptr;
   void* zip_handle ABSL_GUARDED_BY(mutex) = nullptr;
+  BufferInfo* bufferInfo ABSL_GUARDED_BY(mutex){};
+  bool memoryWasAllocated ABSL_GUARDED_BY(mutex) = false;
 
   void closeZip() {
     if (zip_handle != nullptr) {
@@ -245,8 +167,12 @@ struct ZipEncapsulator
       mz_stream_os_delete(&file_stream);
     }
     if (mem_stream != nullptr) {
-      mz_stream_mem_close(mem_stream);
-      mz_stream_mem_delete(&mem_stream);
+      if (memoryWasAllocated) {
+        // mz_stream_mem_delete would delete the output buffer too
+        MZ_FREE(mem_stream);
+      } else {
+        mz_stream_mem_delete(&mem_stream);
+      }
     }
   }
 
@@ -254,6 +180,7 @@ struct ZipEncapsulator
                        int32_t openMode = MZ_OPEN_MODE_READWRITE) {
     int32_t err = MZ_OK;
 
+    mem_stream = nullptr;
     mz_stream_os_create(&file_stream);
     mz_stream_buffered_create(&buffered_stream);
     mz_stream_split_create(&split_stream);
@@ -286,6 +213,72 @@ struct ZipEncapsulator
     }
 
     return openZipFromFile(fileName, openMode);
+  }
+
+  void updateBufferInfo() {
+    mz_stream_mem_get_buffer(mem_stream, (const void**)&bufferInfo->pointer);
+    int32_t len;
+    mz_stream_mem_get_buffer_length(mem_stream, &len);
+    bufferInfo->size = len;
+  }
+
+  bool openZipFromMemory(int32_t openMode = MZ_OPEN_MODE_READWRITE) {
+    int32_t err = MZ_OK;
+
+    file_stream = nullptr;
+    mz_stream_mem_create(&mem_stream);
+    mz_zip_create(&zip_handle);
+
+    if (openMode == MZ_OPEN_MODE_READ) {
+      if (bufferInfo->size > std::numeric_limits<int32_t>::max()) {
+        closeZip();
+        throw std::runtime_error("In-memory files of up 2GiB are supported.");
+      }
+      mz_stream_mem_set_buffer(mem_stream, bufferInfo->pointer,
+                               bufferInfo->size);
+      mz_stream_open(mem_stream, nullptr, MZ_OPEN_MODE_READ);
+      memoryWasAllocated = false;
+    } else  // Write
+    {
+      mz_stream_mem_set_grow_size(mem_stream, 64 * 1024);  // 64 KiB
+      mz_stream_open(mem_stream, nullptr, MZ_OPEN_MODE_CREATE);
+      memoryWasAllocated = true;
+    }
+
+    err = mz_zip_open(zip_handle, mem_stream, openMode);
+    if (err != MZ_OK) {
+      closeZip();
+      return false;
+    }
+    updateBufferInfo();
+
+    return true;
+  }
+
+  bool openZipViaKey(const std::string& key, std::string& key_part,
+                     int32_t openMode = MZ_OPEN_MODE_READWRITE) {
+    std::string zipFileName;
+    if (getZipFileFromKey(key, zipFileName, key_part)) {
+      bool success;
+      if (openMode == MZ_OPEN_MODE_READ) {
+        success = openZipFromFile(zipFileName.c_str(), openMode);
+      } else {
+        success = openZipFileForWriting(zipFileName.c_str(), openMode);
+      }
+
+      if (!success) {
+        throw std::runtime_error("Could not open " + zipFileName);
+      }
+      return true;
+    }
+
+    if (getMemoryInformationFromKey(key, &bufferInfo, key_part)) {
+      if (!openZipFromMemory(openMode)) {
+        throw std::runtime_error("Could not open " + zipFileName);
+      }
+      return true;
+    }
+    return false;
   }
 
   bool findEntry(const std::string& filePath, mz_zip_file** file_info) {
@@ -340,6 +333,7 @@ struct ZipEncapsulator
       }
       mz_zip_entry_close(zip_handle);
     }
+    updateBufferInfo();
 
     return err;
   }
@@ -356,12 +350,10 @@ struct ZipEncapsulatorResource
   static constexpr auto JsonBinder() { return jb::Object(); }
   static Result<Resource> Create(
       Spec, internal::ContextResourceCreationContext context) {
-    test_stream_mem();
     return ZipEncapsulator::Ptr(new ZipEncapsulator);
   }
   static Spec GetSpec(const Resource&,
                       const internal::ContextSpecBuilder& builder) {
-    test_stream_mem();
     return {};
   }
 };
@@ -547,12 +539,8 @@ class ZipDriver::TransactionNode
       return true;
     }
 
-    std::string zipFileName, keyPart;
-    getZipFileFromKey(entry.key_, zipFileName, keyPart);
-
-    if (!data.openZipFromFile(zipFileName.c_str(), MZ_OPEN_MODE_READ)) {
-      throw std::runtime_error("Could not open " + zipFileName);
-    }
+    std::string keyPart;
+    data.openZipViaKey(entry.key_, keyPart);
 
     int32_t err = MZ_OK;
     mz_zip_file* file_info = nullptr;
@@ -560,14 +548,17 @@ class ZipDriver::TransactionNode
       // not found
       if (StorageGeneration::IsNoValue(if_equal)) {
         entry.read_result_.stamp.time = commit_time;
+        data.closeZip();
         return true;
       } else {
+        data.closeZip();
         return false;
       }
     }
 
     // found
     entry.read_result_.stamp.time = commit_time;
+    data.closeZip();
     return true;
   }
 
@@ -610,14 +601,13 @@ class ZipDriver::TransactionNode
 Future<ReadResult> ZipDriver::Read(Key key, ReadOptions options) {
   auto& data = this->data();
   absl::ReaderMutexLock lock(&data.mutex);
-  std::string zipFileName, keyPart;
-  getZipFileFromKey(key, zipFileName, keyPart);
+
+  std::string keyPart;
+  if (!data.openZipViaKey(key, keyPart, MZ_OPEN_MODE_READ)) {
+    throw std::runtime_error("Could not open " + key);
+  }
 
   ReadResult result;
-
-  if (!data.openZipFromFile(zipFileName.c_str(), MZ_OPEN_MODE_READ)) {
-    throw std::runtime_error("Could not open " + zipFileName);
-  }
 
   int32_t err = MZ_OK;
   mz_zip_file* file_info = nullptr;
@@ -642,13 +632,13 @@ Future<ReadResult> ZipDriver::Read(Key key, ReadOptions options) {
     if (read != file_info->uncompressed_size) {
       mz_zip_entry_close(data.zip_handle);
       data.closeZip();
-      throw std::runtime_error("Could not read key " + keyPart + " from file " +
-                               zipFileName + ". Read " + std::to_string(read) +
-                               " bytes out of " + std::to_string(length));
+      throw std::runtime_error("Could not read key " + key + ". Read " +
+                               std::to_string(read) + " bytes out of " +
+                               std::to_string(length));
     }
   }
-  // TODO: keep the zip file open for subsequent reads
   mz_zip_entry_close(data.zip_handle);
+  // TODO: keep the zip file open for subsequent reads
   data.closeZip();
 
   absl::Cord value(std::move(buffer));
@@ -674,10 +664,9 @@ Future<TimestampedStorageGeneration> ZipDriver::Write(
   auto& data = this->data();
   absl::WriterMutexLock lock(&data.mutex);
 
-  std::string zipFileName, keyPart;
-  getZipFileFromKey(key, zipFileName, keyPart);
-  if (!data.openZipFileForWriting(zipFileName.c_str())) {
-    throw std::runtime_error("Could not open " + zipFileName + " for writing");
+  std::string keyPart;
+  if (!data.openZipViaKey(key, keyPart, MZ_OPEN_MODE_READWRITE)) {
+    throw std::runtime_error("Could not open " + key + " for writing");
   }
 
   int32_t err = MZ_OK;
