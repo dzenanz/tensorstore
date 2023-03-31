@@ -168,6 +168,7 @@ struct ZipEncapsulator
     }
     if (mem_stream != nullptr) {
       if (memoryWasAllocated) {
+        updateBufferInfo();
         // mz_stream_mem_delete would delete the output buffer too
         MZ_FREE(mem_stream);
       } else {
@@ -227,7 +228,6 @@ struct ZipEncapsulator
 
     file_stream = nullptr;
     mz_stream_mem_create(&mem_stream);
-    mz_zip_create(&zip_handle);
 
     if (openMode == MZ_OPEN_MODE_READ) {
       if (bufferInfo->size > std::numeric_limits<int32_t>::max()) {
@@ -245,6 +245,7 @@ struct ZipEncapsulator
       memoryWasAllocated = true;
     }
 
+    mz_zip_create(&zip_handle);
     err = mz_zip_open(zip_handle, mem_stream, openMode);
     if (err != MZ_OK) {
       closeZip();
@@ -274,7 +275,7 @@ struct ZipEncapsulator
 
     if (getMemoryInformationFromKey(key, &bufferInfo, key_part)) {
       if (!openZipFromMemory(openMode)) {
-        throw std::runtime_error("Could not open " + zipFileName);
+        throw std::runtime_error("Could not open " + key);
       }
       return true;
     }
@@ -665,7 +666,8 @@ Future<TimestampedStorageGeneration> ZipDriver::Write(
   absl::WriterMutexLock lock(&data.mutex);
 
   std::string keyPart;
-  if (!data.openZipViaKey(key, keyPart, MZ_OPEN_MODE_READWRITE)) {
+  if (!data.openZipViaKey(key, keyPart,
+                          MZ_OPEN_MODE_READWRITE | MZ_OPEN_MODE_CREATE)) {
     throw std::runtime_error("Could not open " + key + " for writing");
   }
 
