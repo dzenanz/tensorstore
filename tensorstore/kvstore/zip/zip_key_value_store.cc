@@ -259,7 +259,8 @@ struct ZipEncapsulator
   }
 
   bool openZipViaKey(const std::string& key, std::string& key_part,
-                     int32_t openMode = MZ_OPEN_MODE_READWRITE) {
+                     int32_t openMode = MZ_OPEN_MODE_READWRITE |
+                                        MZ_OPEN_MODE_CREATE) {
     std::string zipFileName;
     if (getZipFileFromKey(key, zipFileName, key_part)) {
       bool success;
@@ -668,8 +669,7 @@ Future<TimestampedStorageGeneration> ZipDriver::Write(
   absl::WriterMutexLock lock(&data.mutex);
 
   std::string keyPart;
-  if (!data.openZipViaKey(key, keyPart,
-                          MZ_OPEN_MODE_READWRITE | MZ_OPEN_MODE_CREATE)) {
+  if (!data.openZipViaKey(key, keyPart)) {
     throw std::runtime_error("Could not open " + key + " for writing");
   }
 
