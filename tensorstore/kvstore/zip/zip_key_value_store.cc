@@ -773,6 +773,8 @@ void ZipDriver::ListImpl(ListOptions options,
 absl::Status ZipDriver::ReadModifyWrite(
     internal::OpenTransactionPtr& transaction, size_t& phase, Key key,
     ReadModifyWriteSource& source) {
+  return Driver::ReadModifyWrite(transaction, phase, std::move(key), source);
+
   // original implementation
   return internal_kvstore::AddReadModifyWrite<TransactionNode>(
       this, transaction, phase, std::move(key), source);
@@ -799,6 +801,8 @@ absl::Status ZipDriver::ReadModifyWrite(
 
 absl::Status ZipDriver::TransactionalDeleteRange(
     const internal::OpenTransactionPtr& transaction, KeyRange range) {
+  return Driver::TransactionalDeleteRange(transaction, std::move(range));
+
   return internal_kvstore::AddDeleteRange<TransactionNode>(this, transaction,
                                                            std::move(range));
 }
