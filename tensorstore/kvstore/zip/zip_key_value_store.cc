@@ -101,7 +101,7 @@ bool getMemoryInformationFromKey(const std::string& key,
   }
 
   addressString = key.substr(0, pos);  // exclude .memory
-  key_part = key.substr(pos + 8);                  // skip separator
+  key_part = key.substr(pos + 8);      // skip separator
   size_t address = std::stoull(addressString);
   *bufferInfo = reinterpret_cast<BufferInfo*>(address);
 
@@ -183,8 +183,7 @@ struct ZipEncapsulator
     openedFileName.resize(0);
   }
 
-  bool openZipFromFile(const char* fileName,
-                       int32_t openMode = MZ_OPEN_MODE_READWRITE) {
+  bool openZipFromFile(const char* fileName, int32_t openMode) {
     int32_t err = MZ_OK;
 
     mz_stream_os_create(&file_stream);
@@ -206,8 +205,7 @@ struct ZipEncapsulator
     return true;
   }
 
-  bool openZipFileForWriting(const char* fileName,
-                             int32_t openMode = MZ_OPEN_MODE_READWRITE) {
+  bool openZipFileForWriting(const char* fileName, int32_t openMode) {
     std::filesystem::path file(fileName);
     if (!std::filesystem::is_directory(file.parent_path())) {
       // create the directory first
@@ -232,7 +230,7 @@ struct ZipEncapsulator
     }
   }
 
-  bool openZipFromMemory(int32_t openMode = MZ_OPEN_MODE_READWRITE) {
+  bool openZipFromMemory(int32_t openMode) {
     int32_t err = MZ_OK;
 
     mz_stream_mem_create(&mem_stream);
@@ -264,7 +262,7 @@ struct ZipEncapsulator
   }
 
   bool openZipViaKey(const std::string& key, std::string& key_part,
-                     int32_t openMode = MZ_OPEN_MODE_READWRITE) {
+                     int32_t openMode) {
     std::string zipFileName;
     if (getZipFileFromKey(key, zipFileName, key_part)) {
       if (key_part == openedFileName) return true;  // already open
@@ -561,7 +559,7 @@ class ZipDriver::TransactionNode
     }
 
     std::string keyPart;
-    data.openZipViaKey(entry.key_, keyPart);
+    data.openZipViaKey(entry.key_, keyPart, MZ_OPEN_MODE_READ);
 
     int32_t err = MZ_OK;
     mz_zip_file* file_info = nullptr;
@@ -680,7 +678,7 @@ Future<TimestampedStorageGeneration> ZipDriver::Write(
   absl::WriterMutexLock lock(&data.mutex);
 
   std::string keyPart;
-  if (!data.openZipViaKey(key, keyPart)) {
+  if (!data.openZipViaKey(key, keyPart, MZ_OPEN_MODE_READWRITE)) {
     throw std::runtime_error("Could not open " + key + " for writing");
   }
 
