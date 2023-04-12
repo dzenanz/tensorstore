@@ -212,11 +212,7 @@ struct ZipEncapsulator
       mz_dir_make(file.parent_path().string().c_str());
     }
 
-    if (!std::filesystem::exists(file)) {
-      openMode |= MZ_OPEN_MODE_CREATE;
-    } else {
-      openMode |= MZ_OPEN_MODE_APPEND;
-    }
+    openMode |= MZ_OPEN_MODE_CREATE;
 
     return openZipFromFile(fileName, openMode);
   }
