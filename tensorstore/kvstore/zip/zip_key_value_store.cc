@@ -265,7 +265,7 @@ struct ZipEncapsulator
                      int32_t openMode) {
     std::string zipFileName;
     if (getZipFileFromKey(key, zipFileName, key_part)) {
-      if (key_part == openedFileName) return true;  // already open
+      if (zipFileName == openedFileName) return true;  // already open
 
       if (!openedFileName.empty()) {
         closeZip();  // we need to close the old file
@@ -285,7 +285,7 @@ struct ZipEncapsulator
     }
 
     if (getMemoryInformationFromKey(key, &bufferInfo, key_part, zipFileName)) {
-      if (key_part == openedFileName) return true;  // already open
+      if (zipFileName == openedFileName) return true;  // already open
 
       if (!openedFileName.empty()) {
         closeZip();  // we need to close the old file
