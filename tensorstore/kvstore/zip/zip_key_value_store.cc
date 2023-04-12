@@ -264,8 +264,7 @@ struct ZipEncapsulator
   }
 
   bool openZipViaKey(const std::string& key, std::string& key_part,
-                     int32_t openMode = MZ_OPEN_MODE_READWRITE |
-                                        MZ_OPEN_MODE_CREATE) {
+                     int32_t openMode = MZ_OPEN_MODE_READWRITE) {
     std::string zipFileName;
     if (getZipFileFromKey(key, zipFileName, key_part)) {
       if (key_part == openedFileName) return true;  // already open
