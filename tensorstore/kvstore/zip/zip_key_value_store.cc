@@ -93,14 +93,14 @@ bool getZipFileFromKey(const std::string& key, std::string& file_part,
 /// Which part of this path is memory address, and which is key within it.
 /// Returns true if memory address was successfully determined.
 bool getMemoryInformationFromKey(const std::string& key,
-                                 BufferInfo** bufferInfo,
-                                 std::string& key_part) {
+                                 BufferInfo** bufferInfo, std::string& key_part,
+                                 std::string& addressString) {
   std::string::size_type pos = key.find(".memory");
   if (pos == std::string::npos) {
     return false;
   }
 
-  std::string addressString = key.substr(0, pos);  // exclude .memory
+  addressString = key.substr(0, pos);  // exclude .memory
   key_part = key.substr(pos + 8);                  // skip separator
   size_t address = std::stoull(addressString);
   *bufferInfo = reinterpret_cast<BufferInfo*>(address);
@@ -150,7 +150,7 @@ struct ZipEncapsulator
   std::string openedFileName ABSL_GUARDED_BY(mutex);
 
   ~ZipEncapsulator() {
-    absl::WriterMutexLock lock(&mutex); // Is this needed?
+    absl::WriterMutexLock lock(&mutex);  // Is this needed?
     closeZip();
   }
 
@@ -201,6 +201,8 @@ struct ZipEncapsulator
       closeZip();
       return false;
     }
+
+    openedFileName = fileName;
     return true;
   }
 
@@ -285,7 +287,7 @@ struct ZipEncapsulator
       return true;
     }
 
-    if (getMemoryInformationFromKey(key, &bufferInfo, key_part)) {
+    if (getMemoryInformationFromKey(key, &bufferInfo, key_part, zipFileName)) {
       if (key_part == openedFileName) return true;  // already open
 
       if (!openedFileName.empty()) {
@@ -295,6 +297,7 @@ struct ZipEncapsulator
       if (!openZipFromMemory(openMode)) {
         throw std::runtime_error("Could not open " + key);
       }
+      openedFileName = zipFileName;
       return true;
     }
     return false;
