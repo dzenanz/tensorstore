@@ -217,10 +217,12 @@ struct ZipEncapsulator
   }
 
   void updateBufferInfo() {
-    mz_stream_mem_get_buffer(mem_stream, (const void**)&bufferInfo->pointer);
-    int32_t len;
-    mz_stream_mem_get_buffer_length(mem_stream, &len);
-    bufferInfo->size = len;
+    if (mem_stream) {
+      mz_stream_mem_get_buffer(mem_stream, (const void**)&bufferInfo->pointer);
+      int32_t len;
+      mz_stream_mem_get_buffer_length(mem_stream, &len);
+      bufferInfo->size = len;
+    }
   }
 
   bool openZipFromMemory(int32_t openMode = MZ_OPEN_MODE_READWRITE) {
