@@ -135,10 +135,7 @@ struct ZipEncapsulator
   using Ptr = internal::IntrusivePtr<ZipEncapsulator>;
 
   absl::Mutex mutex;
-  /// Next generation number to use when updating the value associated with a
-  /// key.  Using a single per-store counter rather than a per-key counter
-  /// ensures that creating a key, deleting it, then creating it again does
-  /// not result in the same generation number being reused for a given key.
+  /// TensorStore wants these generation numbers, this is used to provide them.
   uint64_t next_generation_number ABSL_GUARDED_BY(mutex) = 0;
 
   /// ZipEncapsulator ivars.
@@ -150,6 +147,12 @@ struct ZipEncapsulator
   void* zip_handle ABSL_GUARDED_BY(mutex) = nullptr;
   BufferInfo* bufferInfo ABSL_GUARDED_BY(mutex){};
   bool memoryWasAllocated ABSL_GUARDED_BY(mutex) = false;
+  std::string openedFileName ABSL_GUARDED_BY(mutex);
+
+  ~ZipEncapsulator() {
+    absl::WriterMutexLock lock(&mutex); // Is this needed?
+    closeZip();
+  }
 
   void closeZip() {
     if (zip_handle != nullptr) {
@@ -171,17 +174,19 @@ struct ZipEncapsulator
         updateBufferInfo();
         // mz_stream_mem_delete would delete the output buffer too
         MZ_FREE(mem_stream);
+        mem_stream = nullptr;
+        memoryWasAllocated = false;
       } else {
         mz_stream_mem_delete(&mem_stream);
       }
     }
+    openedFileName.resize(0);
   }
 
   bool openZipFromFile(const char* fileName,
                        int32_t openMode = MZ_OPEN_MODE_READWRITE) {
     int32_t err = MZ_OK;
 
-    mem_stream = nullptr;
     mz_stream_os_create(&file_stream);
     mz_stream_buffered_create(&buffered_stream);
     mz_stream_split_create(&split_stream);
@@ -228,7 +233,6 @@ struct ZipEncapsulator
   bool openZipFromMemory(int32_t openMode = MZ_OPEN_MODE_READWRITE) {
     int32_t err = MZ_OK;
 
-    file_stream = nullptr;
     mz_stream_mem_create(&mem_stream);
 
     if (openMode == MZ_OPEN_MODE_READ) {
@@ -239,7 +243,6 @@ struct ZipEncapsulator
       mz_stream_mem_set_buffer(mem_stream, bufferInfo->pointer,
                                bufferInfo->size);
       mz_stream_open(mem_stream, nullptr, MZ_OPEN_MODE_READ);
-      memoryWasAllocated = false;
     } else  // Write
     {
       mz_stream_mem_set_grow_size(mem_stream, 64 * 1024);  // 64 KiB
@@ -263,6 +266,12 @@ struct ZipEncapsulator
                                         MZ_OPEN_MODE_CREATE) {
     std::string zipFileName;
     if (getZipFileFromKey(key, zipFileName, key_part)) {
+      if (key_part == openedFileName) return true;  // already open
+
+      if (!openedFileName.empty()) {
+        closeZip();  // we need to close the old file
+      }
+
       bool success;
       if (openMode == MZ_OPEN_MODE_READ) {
         success = openZipFromFile(zipFileName.c_str(), openMode);
@@ -277,6 +286,12 @@ struct ZipEncapsulator
     }
 
     if (getMemoryInformationFromKey(key, &bufferInfo, key_part)) {
+      if (key_part == openedFileName) return true;  // already open
+
+      if (!openedFileName.empty()) {
+        closeZip();  // we need to close the old file
+      }
+
       if (!openZipFromMemory(openMode)) {
         throw std::runtime_error("Could not open " + key);
       }
@@ -552,17 +567,14 @@ class ZipDriver::TransactionNode
       // not found
       if (StorageGeneration::IsNoValue(if_equal)) {
         entry.read_result_.stamp.time = commit_time;
-        data.closeZip();
         return true;
       } else {
-        data.closeZip();
         return false;
       }
     }
 
     // found
     entry.read_result_.stamp.time = commit_time;
-    data.closeZip();
     return true;
   }
 
@@ -635,15 +647,12 @@ Future<ReadResult> ZipDriver::Read(Key key, ReadOptions options) {
                              file_info->uncompressed_size);
     if (read != file_info->uncompressed_size) {
       mz_zip_entry_close(data.zip_handle);
-      data.closeZip();
       throw std::runtime_error("Could not read key " + key + ". Read " +
                                std::to_string(read) + " bytes out of " +
                                std::to_string(length));
     }
   }
   mz_zip_entry_close(data.zip_handle);
-  // TODO: keep the zip file open for subsequent reads
-  data.closeZip();
 
   absl::Cord value(std::move(buffer));
 
@@ -690,7 +699,6 @@ Future<TimestampedStorageGeneration> ZipDriver::Write(
 
     // Add the key/value pair to the zip file
     err = data.addZipEntry(keyPart, value);
-    data.closeZip();
 
     ++data.next_generation_number;
     auto nextGen = StorageGeneration::FromUint64(data.next_generation_number);
@@ -698,11 +706,10 @@ Future<TimestampedStorageGeneration> ZipDriver::Write(
   }
   // Key already exists.
   if (!value) {
-    // Delete request.
-    // TODO: erase
+    // TODO: Erase
     return GenerationNow(StorageGeneration::NoValue());
   } else {
-    // Update
+    // TODO: Update
     ++data.next_generation_number;
     auto nextGen = StorageGeneration::FromUint64(data.next_generation_number);
     return GenerationNow(nextGen);
@@ -793,8 +800,6 @@ absl::Status ZipDriver::TransactionalDeleteRange(
                                                            std::move(range));
 }
 
-// TODO: add support for dataURL, like here:
-// https://github.com/InsightSoftwareConsortium/itk-wasm/blob/ea4654350076ee7ec6a570b542513ea56fa9baa1/packages/compress-stringify/compress-stringify.cxx#L100-L101
 Result<kvstore::Spec> ParseZipUrl(std::string_view url) {
   auto parsed = internal::ParseGenericUri(url);
   assert(parsed.scheme == tensorstore::ZipDriverSpec::id);
