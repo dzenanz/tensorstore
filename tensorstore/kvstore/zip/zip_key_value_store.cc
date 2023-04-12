@@ -245,8 +245,9 @@ struct ZipEncapsulator
       mz_stream_open(mem_stream, nullptr, MZ_OPEN_MODE_READ);
     } else  // Write
     {
+      openMode |= MZ_OPEN_MODE_CREATE;
       mz_stream_mem_set_grow_size(mem_stream, 64 * 1024);  // 64 KiB
-      mz_stream_open(mem_stream, nullptr, MZ_OPEN_MODE_CREATE);
+      mz_stream_open(mem_stream, nullptr, openMode);
       memoryWasAllocated = true;
     }
 
