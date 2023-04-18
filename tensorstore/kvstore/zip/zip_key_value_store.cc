@@ -768,37 +768,11 @@ absl::Status ZipDriver::ReadModifyWrite(
     internal::OpenTransactionPtr& transaction, size_t& phase, Key key,
     ReadModifyWriteSource& source) {
   return Driver::ReadModifyWrite(transaction, phase, std::move(key), source);
-
-  // original implementation
-  return internal_kvstore::AddReadModifyWrite<TransactionNode>(
-      this, transaction, phase, std::move(key), source);
-
-  // my attempt
-  internal_kvstore::SinglePhaseMutation single_phase_mutation;
-  phase = single_phase_mutation.phase_number_;
-
-  auto* entry =
-      single_phase_mutation.multi_phase_->AllocateReadModifyWriteEntry();
-  entry->key_ = std::move(key);
-  entry->single_phase_mutation_ = {&single_phase_mutation, 0};
-
-  entry->source_ = &source;
-  entry->source_->KvsSetTarget(*entry);
-
-  // return ReadModifyWriteStatus::kAddedFirst;
-  WriteOptions options;
-  kvstore::ReadModifyWriteTarget::ReadReceiver receiver;
-  // entry->KvsRead(options, receiver);
-  // receiver.
-  // return this->Write(key, entry->value, options);
 }
 
 absl::Status ZipDriver::TransactionalDeleteRange(
     const internal::OpenTransactionPtr& transaction, KeyRange range) {
   return Driver::TransactionalDeleteRange(transaction, std::move(range));
-
-  return internal_kvstore::AddDeleteRange<TransactionNode>(this, transaction,
-                                                           std::move(range));
 }
 
 Result<kvstore::Spec> ParseZipUrl(std::string_view url) {
