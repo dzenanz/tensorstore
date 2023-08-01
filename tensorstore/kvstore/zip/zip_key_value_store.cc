@@ -15,19 +15,14 @@
 #include "tensorstore/kvstore/zip/zip_key_value_store.h"
 
 #include <atomic>
-#include <deque>
 #include <filesystem>  // C++17
-#include <iterator>
 #include <limits>
-#include <nlohmann/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
 
 #include "absl/base/thread_annotations.h"
-#include "absl/container/btree_map.h"
 #include "absl/status/status.h"
-#include "absl/strings/match.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
 #include "mz.h"
@@ -41,22 +36,18 @@
 #include "tensorstore/context.h"
 #include "tensorstore/context_resource_provider.h"
 #include "tensorstore/internal/intrusive_ptr.h"
-#include "tensorstore/internal/json_binding/bindable.h"
 #include "tensorstore/internal/json_binding/json_binding.h"
 #include "tensorstore/internal/path.h"
 #include "tensorstore/kvstore/byte_range.h"
 #include "tensorstore/kvstore/driver.h"
 #include "tensorstore/kvstore/generation.h"
-#include "tensorstore/kvstore/kvstore.h"
 #include "tensorstore/kvstore/registry.h"
 #include "tensorstore/kvstore/transaction.h"
 #include "tensorstore/kvstore/url_registry.h"
 #include "tensorstore/util/execution/any_receiver.h"
 #include "tensorstore/util/execution/execution.h"
-#include "tensorstore/util/execution/sender.h"
 #include "tensorstore/util/future.h"
 #include "tensorstore/util/result.h"
-#include "tensorstore/util/status.h"
 
 namespace {
 using BufferInfo = struct {
