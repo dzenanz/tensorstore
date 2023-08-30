@@ -37,6 +37,7 @@
 #include "tensorstore/context_resource_provider.h"
 #include "tensorstore/internal/intrusive_ptr.h"
 #include "tensorstore/internal/json_binding/json_binding.h"
+#include "tensorstore/internal/uri_utils.h"
 #include "tensorstore/internal/path.h"
 #include "tensorstore/kvstore/byte_range.h"
 #include "tensorstore/kvstore/driver.h"
@@ -395,9 +396,7 @@ class ZipDriverSpec
   Future<kvstore::DriverPtr> DoOpen() const override;
 
   Result<std::string> ToUrl(std::string_view path) const override {
-    std::string encoded_path;
-    internal::PercentEncodeUriPath(path, encoded_path);
-    return tensorstore::StrCat(id, "://", encoded_path);
+    return tensorstore::StrCat(id, "://", internal::PercentEncodeUriPath(path));
   }
 };
 
