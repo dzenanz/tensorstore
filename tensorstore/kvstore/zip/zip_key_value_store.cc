@@ -273,12 +273,15 @@ struct ZipEncapsulator
       return true;
     }
 
-    if (getMemoryInformationFromKey(key, &bufferInfo, key_part, zipFileName)) {
+    BufferInfo* newBufferInfo = nullptr;
+    if (getMemoryInformationFromKey(key, &newBufferInfo, key_part,
+                                    zipFileName)) {
       if (zipFileName == openedFileName) return true;  // already open
 
       if (!openedFileName.empty()) {
         closeZip();  // we need to close the old file
       }
+      bufferInfo = newBufferInfo;
 
       if (!openZipFromMemory(openMode)) {
         throw std::runtime_error("Could not open " + key);
