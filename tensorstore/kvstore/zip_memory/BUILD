@@ -21,6 +21,7 @@ tensorstore_cc_library(
     deps = [
         "//tensorstore:context",
         "//tensorstore/internal:intrusive_ptr",
+        "//tensorstore/internal:uri_utils",
         "//tensorstore/internal:path",
         "//tensorstore/internal/json_binding",
         "//tensorstore/internal/json_binding:bindable",
@@ -54,6 +55,7 @@ tensorstore_cc_test(
         "//tensorstore:context",
         "//tensorstore/internal:json_gtest",
         "//tensorstore/internal/cache_key",
+        "//tensorstore/kvstore",
         "//tensorstore/kvstore:test_util",
         "//tensorstore/serialization",
         "//tensorstore/serialization:test_util",
@@ -65,6 +67,7 @@ tensorstore_cc_test(
         "//tensorstore/util/execution:sender_testutil",
         "@com_github_nlohmann_json//:nlohmann_json",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_googletest//:gtest_main",
     ],
 )
