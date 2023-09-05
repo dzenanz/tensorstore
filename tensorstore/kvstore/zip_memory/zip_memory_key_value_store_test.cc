@@ -51,7 +51,7 @@ using ::tensorstore::serialization::SerializationRoundTrip;
 
 TEST(ZipMemoryKeyValueStoreTest, Basic) {
   auto store = tensorstore::GetZipMemoryKeyValueStore();
-  tensorstore::internal::TestKeyValueStoreBasicFunctionality(store);
+  tensorstore::internal::TestKeyValueReadWriteOps(store);
 }
 
 TEST(ZipMemoryKeyValueStoreTest, DeleteRange) {
