@@ -15,9 +15,9 @@ filegroup(
 )
 
 tensorstore_cc_library(
-    name = "zip",
-    srcs = ["zip_key_value_store.cc"],
-    hdrs = ["zip_key_value_store.h"],
+    name = "zip_memory",
+    srcs = ["zip_memory_key_value_store.cc"],
+    hdrs = ["zip_memory_key_value_store.h"],
     deps = [
         "//tensorstore:context",
         "//tensorstore/internal:intrusive_ptr",
@@ -46,11 +46,11 @@ tensorstore_cc_library(
 )
 
 tensorstore_cc_test(
-    name = "zip_key_value_store_test",
+    name = "zip_memory_key_value_store_test",
     size = "small",
-    srcs = ["zip_key_value_store_test.cc"],
+    srcs = ["zip_memory_key_value_store_test.cc"],
     deps = [
-        ":zip",
+        ":zip_memory",
         "//tensorstore:context",
         "//tensorstore/internal:json_gtest",
         "//tensorstore/internal/cache_key",

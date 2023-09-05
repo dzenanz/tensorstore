@@ -1,16 +1,16 @@
 $schema: http://json-schema.org/draft-07/schema#
-$id: kvstore/zip
+$id: kvstore/zip_memory
 allOf:
 - $ref: KvStore
 - type: object
   properties:
     driver:
-      const: zip
-    zip_key_value_store:
+      const: zip_memory
+    zip_memory_key_value_store:
       $ref: ContextResource
       description: |-
         Specifies or references a previously defined
-        `Context.zip_key_value_store`.
+        `Context.zip_memory_key_value_store`.
     atomic:
       type: boolean
       default: true
@@ -19,24 +19,24 @@ allOf:
         transaction behavior matches that of the `kvstore/file` and
         `kvstore/gcs` drivers, which may be useful for testing purposes.
 definitions:
-  zip_key_value_store:
-    $id: Context.zip_key_value_store
+  zip_memory_key_value_store:
+    $id: Context.zip_memory_key_value_store
     description: |-
-      Represents the zip key-value store.  If multiple `kvstore/zip`
-      specifications reference the same `Context.zip_key_value_store`, they
+      Represents the zip key-value store.  If multiple `kvstore/zip_memory`
+      specifications reference the same `Context.zip_memory_key_value_store`, they
       all refer to the same zip file (set of key/value pairs).
     type: object
   url:
-    $id: KvStoreUrl/zip
+    $id: KvStoreUrl/zip_memory
     allOf:
     - $ref: KvStoreUrl
     - type: string
     type: string
     title: |
-      :literal:`zip://` KvStore URL scheme
+      :literal:`zip_memory://` KvStore URL scheme
     description: |
       Zip key-value stores may be specified using the custom
-      :file:`zip://{path}` URL syntax, and :file:`zip:memory_address:length` syntax.
+      :file:`zip_memory://{path}` URL syntax, and :file:`zip_memory:memory_address:length` syntax.
 
       .. admonition:: Examples
          :class: example
@@ -47,7 +47,7 @@ definitions:
 
             * - URL representation
               - JSON representation
-            * - ``"zip://"``
-              - ``{"driver": "zip"}``
-            * - ``"zip://path/to/dataset"``
-              - ``{"driver": "zip", "path": "path/to/dataset"}``
+            * - ``"zip_memory://"``
+              - ``{"driver": "zip_memory"}``
+            * - ``"zip_memory://path/to/dataset"``
+              - ``{"driver": "zip_memory", "path": "path/to/dataset"}``

@@ -12,7 +12,7 @@ DRIVER_DOCS = [
     "memory",
     "neuroglancer_uint64_sharded",
     "ocdbt",
-    "zip",
+    "zip_memory",
 ]
 
 filegroup(

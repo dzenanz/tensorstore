@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "tensorstore/kvstore/zip/zip_key_value_store.h"
+#include "tensorstore/kvstore/zip_memory/zip_memory_key_value_store.h"
 
 #include <atomic>
 #include <filesystem>  // C++17
@@ -114,23 +114,23 @@ TimestampedStorageGeneration GenerationNow(StorageGeneration generation) {
   return TimestampedStorageGeneration{std::move(generation), absl::Now()};
 }
 
-/// The actual data for a zip-based KeyValueStore.
+/// The actual data for a zip_memory-based KeyValueStore.
 ///
-/// This is a separate reference-counted object where: `ZipDriver` ->
-/// `Context::Resource<ZipEncapsulatorResource>` -> `ZipEncapsulator`.
-/// This allows the `ZipDriver` to retain a reference to the
-/// `ZipEncapsulatorResource`, while also allowing an equivalent
-/// `ZipDriver` to be constructed from the
-/// `ZipEncapsulatorResource`.
-struct ZipEncapsulator
-    : public internal::AtomicReferenceCount<ZipEncapsulator> {
-  using Ptr = internal::IntrusivePtr<ZipEncapsulator>;
+/// This is a separate reference-counted object where: `ZipMemoryDriver` ->
+/// `Context::Resource<ZipMemoryEncapsulatorResource>` -> `ZipMemoryEncapsulator`.
+/// This allows the `ZipMemoryDriver` to retain a reference to the
+/// `ZipMemoryEncapsulatorResource`, while also allowing an equivalent
+/// `ZipMemoryDriver` to be constructed from the
+/// `ZipMemoryEncapsulatorResource`.
+struct ZipMemoryEncapsulator
+    : public internal::AtomicReferenceCount<ZipMemoryEncapsulator> {
+  using Ptr = internal::IntrusivePtr<ZipMemoryEncapsulator>;
 
   absl::Mutex mutex;
   /// TensorStore wants these generation numbers, this is used to provide them.
   uint64_t next_generation_number ABSL_GUARDED_BY(mutex) = 0;
 
-  /// ZipEncapsulator ivars.
+  /// ZipMemoryEncapsulator ivars.
   // mz_zip_file file_info ABSL_GUARDED_BY(mutex){};
   void* mem_stream ABSL_GUARDED_BY(mutex) = nullptr;
   void* file_stream ABSL_GUARDED_BY(mutex) = nullptr;
@@ -141,7 +141,7 @@ struct ZipEncapsulator
   bool memoryWasAllocated ABSL_GUARDED_BY(mutex) = false;
   std::string openedFileName ABSL_GUARDED_BY(mutex);
 
-  ~ZipEncapsulator() {
+  ~ZipMemoryEncapsulator() {
     absl::WriterMutexLock lock(&mutex);  // Is this needed?
     closeZip();
   }
@@ -352,16 +352,16 @@ struct ZipEncapsulator
 
 /// Defines the context resource (see `tensorstore/context.h`) that actually
 /// owns the stored key/value pairs.
-struct ZipEncapsulatorResource
-    : public internal::ContextResourceTraits<ZipEncapsulatorResource> {
+struct ZipMemoryEncapsulatorResource
+    : public internal::ContextResourceTraits<ZipMemoryEncapsulatorResource> {
   constexpr static char id[] = "zip_encapsulator";
   struct Spec {};
-  using Resource = ZipEncapsulator::Ptr;
+  using Resource = ZipMemoryEncapsulator::Ptr;
   static Spec Default() { return {}; }
   static constexpr auto JsonBinder() { return jb::Object(); }
   static Result<Resource> Create(
       Spec, internal::ContextResourceCreationContext context) {
-    return ZipEncapsulator::Ptr(new ZipEncapsulator);
+    return ZipMemoryEncapsulator::Ptr(new ZipMemoryEncapsulator);
   }
   static Spec GetSpec(const Resource&,
                       const internal::ContextSpecBuilder& builder) {
@@ -369,12 +369,12 @@ struct ZipEncapsulatorResource
   }
 };
 
-const internal::ContextResourceRegistration<ZipEncapsulatorResource>
+const internal::ContextResourceRegistration<ZipMemoryEncapsulatorResource>
     resource_registration;
 
-/// Data members for `ZipDriverSpec`.
-struct ZipDriverSpecData {
-  Context::Resource<ZipEncapsulatorResource> zip_encapsulator;
+/// Data members for `ZipMemoryDriverSpec`.
+struct ZipMemoryDriverSpecData {
+  Context::Resource<ZipMemoryEncapsulatorResource> zip_encapsulator;
 
   /// Make this type compatible with `tensorstore::ApplyMembers`.
   constexpr static auto ApplyMembers = [](auto&& x, auto f) {
@@ -385,16 +385,16 @@ struct ZipDriverSpecData {
 
   /// Must specify a JSON binder.
   constexpr static auto default_json_binder = jb::Object(
-      jb::Member(ZipEncapsulatorResource::id,
-                 jb::Projection<&ZipDriverSpecData::zip_encapsulator>()));
+      jb::Member(ZipMemoryEncapsulatorResource::id,
+                 jb::Projection<&ZipMemoryDriverSpecData::zip_encapsulator>()));
 };
 
-class ZipDriverSpec
-    : public internal_kvstore::RegisteredDriverSpec<ZipDriverSpec,
-                                                    ZipDriverSpecData> {
+class ZipMemoryDriverSpec
+    : public internal_kvstore::RegisteredDriverSpec<ZipMemoryDriverSpec,
+                                                    ZipMemoryDriverSpecData> {
  public:
   /// Specifies the string identifier under which the driver will be registered.
-  static constexpr char id[] = "zip";
+  static constexpr char id[] = "zip_memory";
 
   Future<kvstore::DriverPtr> DoOpen() const override;
 
@@ -403,9 +403,9 @@ class ZipDriverSpec
   }
 };
 
-/// Defines the "zip" KeyValueStore driver.
-class ZipDriver
-    : public internal_kvstore::RegisteredDriver<ZipDriver, ZipDriverSpec> {
+/// Defines the "zip_memory" KeyValueStore driver.
+class ZipMemoryDriver
+    : public internal_kvstore::RegisteredDriver<ZipMemoryDriver, ZipMemoryDriverSpec> {
  public:
   Future<ReadResult> Read(Key key, ReadOptions options) override;
 
@@ -429,14 +429,14 @@ class ZipDriver
 
   /// Returns a reference to the stored key value pairs.  The stored data is
   /// owned by the `Context::Resource` rather than directly by
-  /// `ZipDriver` in order to allow it to live as long as the
-  /// `Context` from which the `ZipDriver` was opened, and thereby
-  /// allow an equivalent `ZipDriver` to be re-opened from the
+  /// `ZipMemoryDriver` in order to allow it to live as long as the
+  /// `Context` from which the `ZipMemoryDriver` was opened, and thereby
+  /// allow an equivalent `ZipMemoryDriver` to be re-opened from the
   /// `Context`.
-  ZipEncapsulator& data() { return **spec_.zip_encapsulator; }
+  ZipMemoryEncapsulator& data() { return **spec_.zip_encapsulator; }
 
   /// Obtains a `BoundSpec` representation from an open `Driver`.
-  absl::Status GetBoundSpecData(ZipDriverSpecData& spec) const {
+  absl::Status GetBoundSpecData(ZipMemoryDriverSpecData& spec) const {
     // `spec` is returned via an out parameter rather than returned via a
     // `Result`, as that simplifies use cases involving composition via
     // inheritance.
@@ -444,13 +444,13 @@ class ZipDriver
     return absl::Status();
   }
 
-  /// In simple cases, such as the "zip" driver, the `Driver` can simply
+  /// In simple cases, such as the "zip_memory" driver, the `Driver` can simply
   /// store a copy of the `BoundSpecData` as a member.
   SpecData spec_;
 };
 
-Future<kvstore::DriverPtr> ZipDriverSpec::DoOpen() const {
-  auto driver = internal::MakeIntrusivePtr<ZipDriver>();
+Future<kvstore::DriverPtr> ZipMemoryDriverSpec::DoOpen() const {
+  auto driver = internal::MakeIntrusivePtr<ZipMemoryDriver>();
   driver->spec_ = data_;
   return driver;
 }
@@ -458,7 +458,7 @@ Future<kvstore::DriverPtr> ZipDriverSpec::DoOpen() const {
 using BufferedReadModifyWriteEntry =
     internal_kvstore::AtomicMultiPhaseMutation::BufferedReadModifyWriteEntry;
 
-class ZipDriver::TransactionNode
+class ZipMemoryDriver::TransactionNode
     : public internal_kvstore::AtomicTransactionNode {
   using Base = internal_kvstore::AtomicTransactionNode;
 
@@ -481,7 +481,7 @@ class ZipDriver::TransactionNode
       internal_kvstore::SinglePhaseMutation& single_phase_mutation) override
       ABSL_NO_THREAD_SAFETY_ANALYSIS {
     if (!single_phase_mutation.remaining_entries_.HasError()) {
-      auto& data = static_cast<ZipDriver&>(*this->driver()).data();
+      auto& data = static_cast<ZipMemoryDriver&>(*this->driver()).data();
       TimestampedStorageGeneration generation;
       UniqueWriterLock lock(data.mutex);
       absl::Time commit_time = absl::Now();
@@ -503,7 +503,7 @@ class ZipDriver::TransactionNode
   /// Validates that the underlying `data` matches the generation constraints
   /// specified in the transaction.  No changes are made to the `data`.
   static bool ValidateEntryConditions(
-      ZipEncapsulator& data,
+      ZipMemoryEncapsulator& data,
       internal_kvstore::SinglePhaseMutation& single_phase_mutation,
       const absl::Time& commit_time) ABSL_SHARED_LOCKS_REQUIRED(data.mutex) {
     bool validated = true;
@@ -515,7 +515,7 @@ class ZipDriver::TransactionNode
     return validated;
   }
 
-  static bool ValidateEntryConditions(ZipEncapsulator& data,
+  static bool ValidateEntryConditions(ZipMemoryEncapsulator& data,
                                       internal_kvstore::MutationEntry& entry,
                                       const absl::Time& commit_time)
       ABSL_SHARED_LOCKS_REQUIRED(data.mutex) {
@@ -537,7 +537,7 @@ class ZipDriver::TransactionNode
     return validated;
   }
 
-  static bool ValidateEntryConditions(ZipEncapsulator& data,
+  static bool ValidateEntryConditions(ZipMemoryEncapsulator& data,
                                       BufferedReadModifyWriteEntry& entry,
                                       const absl::Time& commit_time)
       ABSL_SHARED_LOCKS_REQUIRED(data.mutex) {
@@ -573,7 +573,7 @@ class ZipDriver::TransactionNode
   /// It is assumed that the constraints have already been validated by
   /// `ValidateConditions`.
   static void ApplyMutation(
-      ZipEncapsulator& data,
+      ZipMemoryEncapsulator& data,
       internal_kvstore::SinglePhaseMutation& single_phase_mutation,
       const absl::Time& commit_time) ABSL_EXCLUSIVE_LOCKS_REQUIRED(data.mutex) {
     std::cout << "applying mutation" << std::endl;
@@ -593,7 +593,7 @@ class ZipDriver::TransactionNode
         } else {
           assert(rmw_entry.read_result_.state == ReadResult::kValue);
           WriteOptions options;
-          auto writeResult = GetZipKeyValueStore().get()->Write(
+          auto writeResult = GetZipMemoryKeyValueStore().get()->Write(
               rmw_entry.key_, rmw_entry.read_result_.value, options);
           stamp = writeResult.value();
         }
@@ -604,7 +604,7 @@ class ZipDriver::TransactionNode
   }
 };
 
-Future<ReadResult> ZipDriver::Read(Key key, ReadOptions options) {
+Future<ReadResult> ZipMemoryDriver::Read(Key key, ReadOptions options) {
   auto& data = this->data();
   absl::ReaderMutexLock lock(&data.mutex);
 
@@ -662,7 +662,7 @@ Future<ReadResult> ZipDriver::Read(Key key, ReadOptions options) {
   return result;
 }
 
-Future<TimestampedStorageGeneration> ZipDriver::Write(
+Future<TimestampedStorageGeneration> ZipMemoryDriver::Write(
     Key key, std::optional<Value> value, WriteOptions options) {
   auto& data = this->data();
   absl::WriterMutexLock lock(&data.mutex);
@@ -706,12 +706,12 @@ Future<TimestampedStorageGeneration> ZipDriver::Write(
   }
 }
 
-Future<const void> ZipDriver::DeleteRange(KeyRange range) {
+Future<const void> ZipMemoryDriver::DeleteRange(KeyRange range) {
   // throw std::runtime_error("Erasing key range is not implemented");
   return absl::OkStatus();  // Converted to a ReadyFuture.
 }
 
-void ZipDriver::ListImpl(ListOptions options,
+void ZipMemoryDriver::ListImpl(ListOptions options,
                          AnyFlowReceiver<absl::Status, Key> receiver) {
   auto& data = this->data();
   std::atomic<bool> cancelled{false};
@@ -757,53 +757,53 @@ void ZipDriver::ListImpl(ListOptions options,
   execution::set_stopping(receiver);
 }
 
-absl::Status ZipDriver::ReadModifyWrite(
+absl::Status ZipMemoryDriver::ReadModifyWrite(
     internal::OpenTransactionPtr& transaction, size_t& phase, Key key,
     ReadModifyWriteSource& source) {
   return Driver::ReadModifyWrite(transaction, phase, std::move(key), source);
 }
 
-absl::Status ZipDriver::TransactionalDeleteRange(
+absl::Status ZipMemoryDriver::TransactionalDeleteRange(
     const internal::OpenTransactionPtr& transaction, KeyRange range) {
   return Driver::TransactionalDeleteRange(transaction, std::move(range));
 }
 
-Result<kvstore::Spec> ParseZipUrl(std::string_view url) {
+Result<kvstore::Spec> ParseZipMemoryUrl(std::string_view url) {
   auto parsed = internal::ParseGenericUri(url);
-  assert(parsed.scheme == tensorstore::ZipDriverSpec::id);
+  assert(parsed.scheme == tensorstore::ZipMemoryDriverSpec::id);
   if (!parsed.query.empty()) {
     return absl::InvalidArgumentError("Query string not supported");
   }
   if (!parsed.fragment.empty()) {
     return absl::InvalidArgumentError("Fragment identifier not supported");
   }
-  auto driver_spec = internal::MakeIntrusivePtr<ZipDriverSpec>();
+  auto driver_spec = internal::MakeIntrusivePtr<ZipMemoryDriverSpec>();
   driver_spec->data_.zip_encapsulator =
-      Context::Resource<ZipEncapsulatorResource>::DefaultSpec();
+      Context::Resource<ZipMemoryEncapsulatorResource>::DefaultSpec();
   return {std::in_place, std::move(driver_spec),
           internal::PercentDecode(parsed.authority_and_path)};
 }
 
 }  // namespace
 
-kvstore::DriverPtr GetZipKeyValueStore() {
-  auto ptr = internal::MakeIntrusivePtr<ZipDriver>();
+kvstore::DriverPtr GetZipMemoryKeyValueStore() {
+  auto ptr = internal::MakeIntrusivePtr<ZipMemoryDriver>();
   ptr->spec_.zip_encapsulator =
-      Context::Default().GetResource<ZipEncapsulatorResource>().value();
+      Context::Default().GetResource<ZipMemoryEncapsulatorResource>().value();
   return ptr;
 }
 
 }  // namespace tensorstore
 
-TENSORSTORE_DECLARE_GARBAGE_COLLECTION_NOT_REQUIRED(tensorstore::ZipDriver)
+TENSORSTORE_DECLARE_GARBAGE_COLLECTION_NOT_REQUIRED(tensorstore::ZipMemoryDriver)
 
 // Registers the driver.
 namespace {
 const tensorstore::internal_kvstore::DriverRegistration<
-    tensorstore::ZipDriverSpec>
+    tensorstore::ZipMemoryDriverSpec>
     registration;
 
 const tensorstore::internal_kvstore::UrlSchemeRegistration
-    url_scheme_registration{tensorstore::ZipDriverSpec::id,
-                            tensorstore::ParseZipUrl};
+    url_scheme_registration{tensorstore::ZipMemoryDriverSpec::id,
+                            tensorstore::ParseZipMemoryUrl};
 }  // namespace
