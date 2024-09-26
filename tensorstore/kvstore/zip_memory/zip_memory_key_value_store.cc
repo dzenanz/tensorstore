@@ -37,8 +37,8 @@
 #include "tensorstore/context_resource_provider.h"
 #include "tensorstore/internal/intrusive_ptr.h"
 #include "tensorstore/internal/json_binding/json_binding.h"
-#include "tensorstore/internal/uri_utils.h"
 #include "tensorstore/internal/path.h"
+#include "tensorstore/internal/uri_utils.h"
 #include "tensorstore/kvstore/byte_range.h"
 #include "tensorstore/kvstore/driver.h"
 #include "tensorstore/kvstore/generation.h"
@@ -117,10 +117,10 @@ TimestampedStorageGeneration GenerationNow(StorageGeneration generation) {
 /// The actual data for a zip_memory-based KeyValueStore.
 ///
 /// This is a separate reference-counted object where: `ZipMemoryDriver` ->
-/// `Context::Resource<ZipMemoryEncapsulatorResource>` -> `ZipMemoryEncapsulator`.
-/// This allows the `ZipMemoryDriver` to retain a reference to the
-/// `ZipMemoryEncapsulatorResource`, while also allowing an equivalent
-/// `ZipMemoryDriver` to be constructed from the
+/// `Context::Resource<ZipMemoryEncapsulatorResource>` ->
+/// `ZipMemoryEncapsulator`. This allows the `ZipMemoryDriver` to retain a
+/// reference to the `ZipMemoryEncapsulatorResource`, while also allowing an
+/// equivalent `ZipMemoryDriver` to be constructed from the
 /// `ZipMemoryEncapsulatorResource`.
 struct ZipMemoryEncapsulator
     : public internal::AtomicReferenceCount<ZipMemoryEncapsulator> {
@@ -405,7 +405,8 @@ class ZipMemoryDriverSpec
 
 /// Defines the "zip_memory" KeyValueStore driver.
 class ZipMemoryDriver
-    : public internal_kvstore::RegisteredDriver<ZipMemoryDriver, ZipMemoryDriverSpec> {
+    : public internal_kvstore::RegisteredDriver<ZipMemoryDriver,
+                                                ZipMemoryDriverSpec> {
  public:
   Future<ReadResult> Read(Key key, ReadOptions options) override;
 
@@ -415,8 +416,7 @@ class ZipMemoryDriver
 
   Future<const void> DeleteRange(KeyRange range) override;
 
-  void ListImpl(ListOptions options,
-                AnyFlowReceiver<absl::Status, Key> receiver) override;
+  void ListImpl(ListOptions options, kvstore::ListReceiver receiver) override;
 
   absl::Status ReadModifyWrite(internal::OpenTransactionPtr& transaction,
                                size_t& phase, Key key,
@@ -487,13 +487,12 @@ class ZipMemoryDriver::TransactionNode
       absl::Time commit_time = absl::Now();
       if (!ValidateEntryConditions(data, single_phase_mutation, commit_time)) {
         lock.unlock();
-        internal_kvstore::RetryAtomicWriteback(single_phase_mutation,
-                                               commit_time);
+        internal_kvstore::RetryAtomicWriteback(commit_time);
         return;
       }
       ApplyMutation(data, single_phase_mutation, commit_time);
       lock.unlock();
-      internal_kvstore::AtomicCommitWritebackSuccess(single_phase_mutation);
+      internal_kvstore::AtomicCommitWritebackSuccess();
     } else {
       internal_kvstore::WritebackError(single_phase_mutation);
     }
@@ -541,7 +540,7 @@ class ZipMemoryDriver::TransactionNode
                                       BufferedReadModifyWriteEntry& entry,
                                       const absl::Time& commit_time)
       ABSL_SHARED_LOCKS_REQUIRED(data.mutex) {
-    auto& stamp = entry.read_result_.stamp;
+    auto& stamp = entry.value_state_.stamp;
     auto if_equal = StorageGeneration::Clean(stamp.generation);
     if (StorageGeneration::IsUnknown(if_equal)) {
       assert(stamp.time == absl::InfiniteFuture());
@@ -556,7 +555,7 @@ class ZipMemoryDriver::TransactionNode
     if (!data.findEntry(keyPart, &file_info)) {
       // not found
       if (StorageGeneration::IsNoValue(if_equal)) {
-        entry.read_result_.stamp.time = commit_time;
+        entry.value_state_.stamp.time = commit_time;
         return true;
       } else {
         return false;
@@ -564,7 +563,7 @@ class ZipMemoryDriver::TransactionNode
     }
 
     // found
-    entry.read_result_.stamp.time = commit_time;
+    entry.value_state_.stamp.time = commit_time;
     return true;
   }
 
@@ -583,18 +582,18 @@ class ZipMemoryDriver::TransactionNode
     for (auto& entry : single_phase_mutation.entries_) {
       if (entry.entry_type() == kReadModifyWrite) {
         auto& rmw_entry = static_cast<BufferedReadModifyWriteEntry&>(entry);
-        auto& stamp = rmw_entry.read_result_.stamp;
+        auto& stamp = rmw_entry.value_state_.stamp;
         stamp.time = commit_time;
         if (!StorageGeneration::IsDirty(
-                rmw_entry.read_result_.stamp.generation)) {
+                rmw_entry.value_state_.stamp.generation)) {
           // Do nothing
-        } else if (rmw_entry.read_result_.state == ReadResult::kMissing) {
+        } else if (rmw_entry.value_state_.state == ReadResult::kMissing) {
           throw std::runtime_error("Erasing an entry is not implemented");
         } else {
-          assert(rmw_entry.read_result_.state == ReadResult::kValue);
+          assert(rmw_entry.value_state_.state == ReadResult::kValue);
           WriteOptions options;
           auto writeResult = GetZipMemoryKeyValueStore().get()->Write(
-              rmw_entry.key_, rmw_entry.read_result_.value, options);
+              rmw_entry.key_, rmw_entry.value_state_.value, options);
           stamp = writeResult.value();
         }
       } else {
@@ -712,7 +711,7 @@ Future<const void> ZipMemoryDriver::DeleteRange(KeyRange range) {
 }
 
 void ZipMemoryDriver::ListImpl(ListOptions options,
-                         AnyFlowReceiver<absl::Status, Key> receiver) {
+                               kvstore::ListReceiver receiver) {
   auto& data = this->data();
   std::atomic<bool> cancelled{false};
   execution::set_starting(receiver, [&cancelled] {
@@ -795,7 +794,8 @@ kvstore::DriverPtr GetZipMemoryKeyValueStore() {
 
 }  // namespace tensorstore
 
-TENSORSTORE_DECLARE_GARBAGE_COLLECTION_NOT_REQUIRED(tensorstore::ZipMemoryDriver)
+TENSORSTORE_DECLARE_GARBAGE_COLLECTION_NOT_REQUIRED(
+    tensorstore::ZipMemoryDriver)
 
 // Registers the driver.
 namespace {
